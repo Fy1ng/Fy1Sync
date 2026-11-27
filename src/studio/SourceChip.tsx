@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react'
-import { ErrorActionRow, ErrorText } from '../ui/ErrorDetails'
+import { ErrorText } from '../ui/ErrorDetails'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { draftFromDirectOptions, EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStreamDraft } from '../core/directStream'
@@ -91,6 +91,7 @@ function SourcePanel({ role, onDone, onSchedule, previewToggle }: {
     <div className="source-panel">
       <form className="link-row" onSubmit={(event) => {
         event.preventDefault()
+        if (load.busy) return
         const parsedDirect = parseDirectDraft(directDraft)
         if (!parsedDirect.ok) {
           setDirectProblem(parsedDirect.message)
@@ -107,9 +108,11 @@ function SourcePanel({ role, onDone, onSchedule, previewToggle }: {
       }}>
         <input value={input} onChange={(event) => { setInput(event.target.value); setDirectProblem(null) }} aria-label={`${ROLE_LABEL[role]}链接`}
           placeholder={SOURCE_HINT} spellCheck={false} />
-        <button type="submit" className="btn-solid" disabled={load.busy || input.trim() === ''}>
-          {load.busy ? '载入中' : '载入'}
-        </button>
+        {load.busy
+          ? <button key="cancel" type="button" className="btn-quiet" onClick={() => loader.cancelLoad(role)}>
+            {state.descriptor ? '停止此片源' : '取消载入'}
+          </button>
+          : <button key="submit" type="submit" className="btn-solid" disabled={input.trim() === ''}>载入</button>}
       </form>
       {!bareRoom && (
         <DirectStreamFields
@@ -147,16 +150,7 @@ function SourcePanel({ role, onDone, onSchedule, previewToggle }: {
       {!load.problem && !(state.status === 'error' && state.error) && <LoginOffer role={role} />}
       {load.notes.map((note) => <p key={note} className="muted">{note}</p>)}
 
-      {buffer && (buffer.failure || buffer.state === 'failed' ? (
-        <div className="source-issue muted">
-          <p className="source-issue-text">{bufferStatusText(buffer)}</p>
-          <ErrorActionRow error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} summary={bufferStatusText(buffer)}>
-            {!load.problem && !(state.status === 'error' && state.error) && (
-              <button type="button" className="btn-quiet small" disabled={load.busy} onClick={() => void loader.retry(role)}>重试</button>
-            )}
-          </ErrorActionRow>
-        </div>
-      ) : <p className="muted">{bufferStatusText(buffer)}</p>)}
+      {buffer && !buffer.failure && buffer.state !== 'failed' && <p className="muted">{bufferStatusText(buffer)}</p>}
       {isCommercialBreakActive({
         platform: state.descriptor?.platform,
         status: state.status,

@@ -132,9 +132,13 @@ export function Intake({ onClose, onSchedule, onFavorites }: {
             onChange={(event) => { draftRevision.current++; setText(event.target.value); setDirectProblem(null); if (role) loader.clearProblem(role) }}
             aria-label="直播间链接" spellCheck={false} autoComplete="off"
             placeholder={role === null ? '先选择画面或解说' : SOURCE_HINT} />
-          <button type="submit" className="intake-go" disabled={!canSubmit} aria-label="添加" title="添加（回车）">
-            <Icon name="enter" />
-          </button>
+          {role && load?.busy
+            ? <button key="cancel" type="button" className="btn-quiet small" onClick={() => loader.cancelLoad(role)}>
+              {media[role].descriptor ? '停止此片源' : '取消载入'}
+            </button>
+            : <button key="submit" type="submit" className="intake-go" disabled={!canSubmit} aria-label="添加" title="添加（回车）">
+              <Icon name="enter" />
+            </button>}
         </form>
 
         {role !== null && bare === null && (

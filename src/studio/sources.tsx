@@ -20,6 +20,7 @@ import { streamFailureHint } from '../../server/networkFailure'
 import { displayError, errorDetails, errorMessage, type ErrorDetails } from '../core/errorDetails'
 import { notifyLoginStateChanged, subscribeLoginStateChanged } from '../core/loginEvents'
 import { ErrorActionRow } from '../ui/ErrorDetails'
+import { bufferStatusText } from '../ui/bufferStatus'
 import { refreshLoginStatus } from './login/status'
 import type { SettingsTarget } from './SettingsSheet'
 
@@ -135,6 +136,7 @@ interface Loader {
   loadInput: (role: SourceRole, input: string, platform?: RoomPlatform, direct?: DirectStreamOptions) => Promise<boolean>
   loadDescriptor: (role: SourceRole, descriptor: MediaDescriptor) => Promise<boolean>
   clearProblem: (role: SourceRole) => void
+  cancelLoad: (role: SourceRole) => void
   /** Retry the last input submitted for `role`. */
   retry: (role: SourceRole) => Promise<boolean>
   /** Sign in for `state[role].login`, then load the same input again. */
@@ -373,14 +375,26 @@ export function SourceLoaderProvider({ children, onOpenSettings }: {
     }
   }, [finishAttachment, loadDescriptor, offerLogin, patch, session])
 
+  const cancelLoad = useCallback((role: SourceRole) => {
+    if (!live.current[role].busy) return
+    delete loads.current[role]
+    session.unloadSource(role)
+    patch(role, { busy: false, problem: null, notes: [], login: null })
+  }, [patch, session])
+
   const retry = useCallback(async (role: SourceRole): Promise<boolean> => {
     const currentLoad = live.current[role]
-    if (currentLoad.busy || currentLoad.loggingIn || currentLoad.updatingTool) return false
     const again = asked.current[role]
+    const existing = session.snapshot.media[role].descriptor
+    if (currentLoad.loggingIn || currentLoad.updatingTool) return false
+    if (currentLoad.busy) {
+      const phase = session.snapshot.buffers[role]?.state
+      if (phase !== 'reconnecting' && phase !== 'failed') return false
+      cancelLoad(role)
+    }
     if (again) {
       return await loadInput(role, again.input, again.platform, ...(again.direct ? [again.direct] : []))
     }
-    const existing = session.snapshot.media[role].descriptor
     if (existing?.input) {
       const roomPlatform = existing.platform === 'douyu' || existing.platform === 'bilibili' || existing.platform === 'huya' || existing.platform === 'douyin'
         ? existing.platform
@@ -388,7 +402,7 @@ export function SourceLoaderProvider({ children, onOpenSettings }: {
       return await loadInput(role, existing.input, roomPlatform)
     }
     return false
-  }, [loadInput, session])
+  }, [cancelLoad, loadInput, session])
 
   const login = useCallback(async (role: SourceRole) => {
     const platform = live.current[role].login
@@ -532,6 +546,7 @@ export function SourceLoaderProvider({ children, onOpenSettings }: {
     loadInput,
     loadDescriptor,
     clearProblem,
+    cancelLoad,
     retry,
     login,
     updateToolAndRetry,
@@ -539,7 +554,7 @@ export function SourceLoaderProvider({ children, onOpenSettings }: {
     roomName,
     connectRoom,
     disconnectRoom,
-  }), [state, previousSources, restoring, restorePrevious, restoreProblem, loadInput, loadDescriptor, clearProblem, retry, login, updateToolAndRetry, onOpenSettings, roomName, connectRoom, disconnectRoom])
+  }), [state, previousSources, restoring, restorePrevious, restoreProblem, loadInput, loadDescriptor, clearProblem, cancelLoad, retry, login, updateToolAndRetry, onOpenSettings, roomName, connectRoom, disconnectRoom])
   return <LoaderContext.Provider value={value}>{children}</LoaderContext.Provider>
 }
 
@@ -627,6 +642,20 @@ export function SourceIssue({ role, className }: { role: SourceRole; className?:
   const state = snapshot.media[role]
   const mediaError = !load.problem && state.status === 'error' ? state.error : null
   const problem = load.problem
+  const buffer = snapshot.buffers[role]
+  if (!problem && (load.busy || !mediaError) && buffer && (buffer.failure || buffer.state === 'failed')) {
+    const summary = bufferStatusText(buffer)
+    const canRetry = !load.busy || buffer.state === 'reconnecting' || buffer.state === 'failed'
+    return (
+      <div className={`source-issue ${className ?? 'muted'}`}>
+        <p className="source-issue-text">{summary}</p>
+        <ErrorActionRow error={buffer.failure ?? { reason: buffer.reason, message: summary }} summary={summary}>
+          <button type="button" className="btn-quiet small" disabled={!canRetry || load.loggingIn || load.updatingTool}
+            onClick={() => void loader.retry(role)}>重试</button>
+        </ErrorActionRow>
+      </div>
+    )
+  }
   if (!problem && !mediaError) return null
 
   const text = problem

@@ -650,11 +650,10 @@ export class Session {
     this.changingSources.add(role)
     this.disconnectAutoDanmakuForChange(role)
     try {
-      if (!descriptor.url.includes('/buffer/')) {
-        await apiClient.stopBuffer(role)
-        this.bufferStates = { ...this.bufferStates, [role]: null }
-      }
+      const usesBuffer = descriptor.url.includes('/buffer/')
+      if (!usesBuffer) await apiClient.stopBuffer(role)
       if (generation !== this.sourceGeneration[role] || this.disposed) return
+      if (!usesBuffer) this.bufferStates = { ...this.bufferStates, [role]: null }
       await this.engine.load(role, descriptor)
       if (generation !== this.sourceGeneration[role] || this.disposed) return
       const state = this.engine.getState()[role]

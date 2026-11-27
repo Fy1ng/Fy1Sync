@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from '../app/apiClient'
+import type { BufferState } from '../../electron/bufferManager'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import { primeMediaElement } from '../test/setup'
@@ -10,11 +11,13 @@ import { resetSavedRooms, type SavedRoom } from './savedRooms'
 import { SourceLoaderProvider, useSourceLoader } from './sources'
 
 let session: Session
+let bufferEvent: (state: BufferState) => void
 const saved: SavedRoom = { id: 'saved', role: 'official', platform: 'huya', input: '12345', label: '测试收藏', savedAt: 0 }
 beforeEach(() => {
   resetSavedRooms()
   vi.stubGlobal('streamSyncer', { invoke: vi.fn(async () => ({ ok: true, value: {} })) })
   vi.spyOn(apiClient, 'feature').mockImplementation(async (method) => ({ ok: true, value: method === 'listSavedRooms' ? [saved] : {} }) as never)
+  vi.spyOn(apiClient, 'subscribeBuffer').mockImplementation(listener => { bufferEvent = listener; return () => {} })
   session = new Session({ createSampler: () => null })
 })
 afterEach(() => { cleanup(); resetSavedRooms(); session.dispose(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -35,6 +38,71 @@ function deferResolveFailure() {
 }
 
 describe('source attachment and intake drafts', () => {
+  it('can retry an empty source on its fifth reconnect and stop the new attempt before either resolve returns', async () => {
+    const replies: Array<(result: Awaited<ReturnType<typeof apiClient.resolve>>) => void> = []
+    const resolve = vi.spyOn(apiClient, 'resolve').mockImplementation(() => new Promise(done => replies.push(done)))
+    const stop = vi.spyOn(apiClient, 'stopBuffer')
+    const attach = vi.spyOn(session, 'loadSource')
+    mount(<SourceChip role="official" />)
+    fireEvent.click(screen.getByRole('button', { name: '画面：未载入' }))
+    const field = screen.getByRole('textbox', { name: '画面链接' })
+    fireEvent.change(field, { target: { value: 'https://www.douyu.com/6657' } })
+    fireEvent.click(screen.getByRole('button', { name: '载入' }))
+    act(() => {
+      bufferEvent({ role: 'official', state: 'reconnecting', seconds: 0, attempt: 5,
+        failure: { stage: 'connect', code: 'connection-refused', message: '无法连接直播服务器' } })
+      session.flush()
+    })
+    expect(screen.getByText(/第 5 次重试/)).toBeVisible()
+    const retry = screen.getByRole('button', { name: '重试' })
+    expect(retry).toBeEnabled()
+    fireEvent.click(retry)
+    expect(resolve).toHaveBeenCalledTimes(2)
+    expect(resolve.mock.calls[1]).toEqual(resolve.mock.calls[0])
+    await act(async () => { replies[0]!(resolveFailure) })
+    expect(screen.queryByText('载入失败')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取消载入' }))
+    expect(screen.getByRole('button', { name: '载入' })).toBeEnabled()
+    expect(stop.mock.calls.every(([role]) => role === 'official')).toBe(true)
+    expect(stop).toHaveBeenCalledWith('official')
+    await act(async () => { replies[1]!({ ok: true, value: { ok: true, stream: {
+      platform: 'douyu', channel: '6657', kind: 'hls', url: 'app://app/buffer/old', label: '旧请求', requiresProxy: false,
+    } } }) })
+    expect(attach).not.toHaveBeenCalled()
+    fireEvent.change(field, { target: { value: 'https://live.bilibili.com/12345' } })
+    fireEvent.click(screen.getByRole('button', { name: '载入' }))
+    expect(resolve.mock.lastCall?.[0]).toBe('https://live.bilibili.com/12345')
+    await act(async () => { replies[2]!(resolveFailure) })
+  })
+
+  it('allows cancelling a pending intake load and submitting a different link immediately', async () => {
+    const { resolve, fail } = deferResolveFailure()
+    mount(<Intake onClose={() => {}} onSchedule={() => {}} />)
+    fireEvent.click(screen.getByRole('radio', { name: /解说/ }))
+    const field = screen.getByRole('textbox', { name: '直播间链接' })
+    fireEvent.change(field, { target: { value: 'https://www.douyu.com/6657' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+    fireEvent.click(screen.getByRole('button', { name: '取消载入' }))
+    fireEvent.change(field, { target: { value: 'https://live.bilibili.com/12345' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '添加' })) })
+    await act(async () => { fail() })
+    expect(resolve).toHaveBeenCalledTimes(2)
+    expect(field).toHaveValue('https://live.bilibili.com/12345')
+  })
+
+  it('keeps the replacement buffer state when an older local attachment finishes stopping', async () => {
+    let finishStop!: () => void
+    const ok = { ok: true as const, value: { ok: true as const } }
+    vi.spyOn(apiClient, 'stopBuffer').mockImplementationOnce(() => new Promise(done => { finishStop = () => done(ok) })).mockResolvedValue(ok)
+    const pending = session.loadSource('official', { input: direct, url: direct, label: '本地', kind: 'progressive', loop: false, viaProxy: false })
+    session.unloadSource('official')
+    session.beginSourceChange('official')
+    bufferEvent({ role: 'official', state: 'reconnecting', seconds: 0, attempt: 1 })
+    finishStop()
+    await pending
+    expect(session.flush().buffers.official?.state).toBe('reconnecting')
+  })
+
   it('leaves the source panel open after a rejected direct attachment and retries in place', async () => {
     mount(<SourceChip role="official" />)
     fireEvent.click(screen.getByRole('button', { name: '画面：未载入' }))
