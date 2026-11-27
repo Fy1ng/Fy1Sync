@@ -333,4 +333,125 @@ describe('secondary preview (.pip) drag, 8-way resize, persistence, and concise 
 
     unmount()
   })
+
+  it('quick-switches from stalled official stream via camera overlay, monitors recovery, auto-syncs, and returns with camera restored', async () => {
+    const session = makeSession()
+    const store = new CameraStore(null)
+    store.set('douyu:6657', {
+      crop: { x: 0.05, y: 0.5, w: 0.2, h: 0.2 },
+      window: { ...DEFAULT_CAMERA_WINDOW, x: 0.08, y: 0.12, width: 0.2 },
+      enabled: true,
+      updatedAt: 1,
+    })
+    setCameraStoreForTests(store)
+
+    await session.loadSource('official', {
+      kind: 'test', url: '/test-sources/official.mp4', input: 'https://www.youtube.com/watch?v=live1',
+      label: 'YouTube 直播', loop: true, viaProxy: true, platform: 'youtube',
+    })
+    await session.loadSource('commentary', {
+      kind: 'test', url: '/test-sources/commentary.mp4', input: '6657', sourceRoom: '6657',
+      label: '斗鱼 6657', loop: true, viaProxy: false, platform: 'douyu',
+    })
+    primeMediaElement(session.engine.element('official'))
+    primeMediaElement(session.engine.element('commentary'))
+    await session.setPlaying(true)
+    session.flush()
+
+    const syncSpy = vi.spyOn(session, 'syncNow').mockResolvedValue({
+      phase: 'done',
+      dryRun: false,
+      estimate: {
+        status: 'ok',
+        residualSeconds: 0.04,
+        totalOffsetSeconds: 3.2,
+        direction: 'official',
+        rewindSeconds: 3.2,
+        confidence: 0.96,
+        officialAnchorSpread: 0.01,
+        commentaryAnchorSpread: 0.01,
+        officialEvents: 4,
+        commentaryEvents: 4,
+      },
+      plan: null,
+      applied: true,
+      failure: null,
+      divergence: null,
+      samples: { official: 4, commentary: 4 },
+      jumps: { official: 0, commentary: 0 },
+      startedAt: 1,
+      finishedAt: 2,
+    })
+
+    const { container, unmount } = render(
+      <SessionProvider session={session}>
+        <Studio />
+      </SessionProvider>,
+    )
+    await new Promise((r) => setTimeout(r, 0))
+
+    // Typical setup: hide the full commentary preview and rely on the streamer camera overlay.
+    fireEvent.click(screen.getByRole('button', { name: '隐藏小画面' }))
+    expect(container.querySelector('.pip')).toBeNull()
+
+    const overlay = await waitFor(() => {
+      const node = container.querySelector<HTMLElement>('.camera-overlay')
+      expect(node).not.toBeNull()
+      return node!
+    })
+    const cameraBody = overlay.querySelector<HTMLElement>('.camera-body')!
+    mockRect(overlay, { left: 80, top: 72, width: 200, height: 112 })
+
+    // Dragging the camera moves it without switching streams.
+    fireEvent.pointerDown(cameraBody, { button: 0, pointerId: 9, clientX: 120, clientY: 100 })
+    fireEvent.pointerMove(cameraBody, { pointerId: 9, clientX: 200, clientY: 140 })
+    fireEvent.pointerUp(cameraBody, { pointerId: 9, clientX: 200, clientY: 140 })
+    fireEvent.click(cameraBody)
+    expect(session.snapshot.mainRole).toBe('official')
+    await new Promise((r) => setTimeout(r, 0))
+
+    // Official YouTube stream stalls (readyState drops below HAVE_FUTURE_DATA while unpaused).
+    const officialVideo = session.engine.element('official')
+    Object.defineProperty(officialVideo, 'readyState', { value: 2, configurable: true })
+    act(() => {
+      officialVideo.dispatchEvent(new Event('waiting'))
+    })
+    await waitFor(() => expect(overlay).toHaveAttribute('data-attention', 'true'))
+
+    // Clicking the camera overlay switches to commentary, hides the duplicate camera, and shows YouTube PiP.
+    fireEvent.pointerDown(cameraBody, { button: 0, pointerId: 10, clientX: 200, clientY: 140 })
+    fireEvent.pointerUp(cameraBody, { pointerId: 10, clientX: 200, clientY: 140 })
+    fireEvent.click(cameraBody)
+
+    await waitFor(() => expect(session.snapshot.mainRole).toBe('commentary'))
+    expect(container.querySelector('.camera-overlay')).toBeNull()
+    const officialPip = await waitFor(() => {
+      const node = container.querySelector<HTMLElement>('.pip[data-role="official"]')
+      expect(node).not.toBeNull()
+      return node!
+    })
+    expect(within(officialPip).getByRole('status')).toHaveTextContent('画面缓冲中…')
+    expect(syncSpy).not.toHaveBeenCalled()
+
+    // Official stream finishes loading and resumes smooth playback -> automatically syncs!
+    Object.defineProperty(officialVideo, 'readyState', { value: 4, configurable: true })
+    act(() => {
+      officialVideo.dispatchEvent(new Event('canplaythrough'))
+      officialVideo.dispatchEvent(new Event('playing'))
+    })
+
+    await waitFor(() => expect(syncSpy).toHaveBeenCalledTimes(1))
+    expect(syncSpy).toHaveBeenCalledWith({ silentSuccess: true })
+    await waitFor(() => {
+      expect(within(officialPip).getByRole('status')).toHaveTextContent('已同步 · 点击切回')
+    })
+
+    // Clicking the YouTube preview switches back to official, restores hidden commentary PiP, and shows camera again.
+    fireEvent.click(screen.getByRole('button', { name: '将画面切换为主画面' }))
+    await waitFor(() => expect(session.snapshot.mainRole).toBe('official'))
+    expect(container.querySelector('.pip')).toBeNull()
+    await waitFor(() => expect(container.querySelector('.camera-overlay')).not.toBeNull())
+
+    unmount()
+  })
 })

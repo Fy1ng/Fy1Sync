@@ -1416,6 +1416,7 @@ export class Session {
       && SOURCE_ROLES.every(role => samples[role].observationRevision === this.observationRevision[role])
     const media = this.engine.getState()
     const paired = enabled && SOURCE_ROLES.every(role => media[role].status === 'ready')
+    let diagnosticChanged = false
     for (const role of SOURCE_ROLES) {
       const sample = samples[role]
       const observing = enabled && media[role].status === 'ready'
@@ -1424,13 +1425,17 @@ export class Session {
       const individual = observePlaybackProgress(this.diagnosticProgress[role], { at, official: sample, commentary: sample }, observing)
       this.diagnosticProgress[role] = individual.state
       if (individual.started.length) {
+        diagnosticChanged = true
         this.diagnostics.startStall(role)
         if (observing && this.playingValue && !sample.paused && !sample.seeking && !sample.ended) {
           this.recordProxyInstability(role)
         }
       }
       if (individual.ended.length || !observing || sample.paused || sample.seeking || sample.ended
-        || timerLateMs > 1000) this.diagnostics.endStall(role)
+        || timerLateMs > 1000) {
+        if (individual.ended.length) diagnosticChanged = true
+        this.diagnostics.endStall(role)
+      }
       if (paired && !sample.paused && !sample.seeking && !sample.ended
         && sample.discontinuities > this.continuity[role]) this.reconnectPending = true
       this.continuity[role] = sample.discontinuities
@@ -1452,7 +1457,7 @@ export class Session {
         void this.executeSync(false)
       }
     }
-    if (at - this.diagnosticNotifyAt >= 1000) {
+    if (diagnosticChanged || at - this.diagnosticNotifyAt >= 1000) {
       this.diagnosticNotifyAt = at
       this.notify()
     }
@@ -1475,12 +1480,12 @@ export class Session {
     return result
   }
 
-  async syncNow(): Promise<AutoSyncRunResult> {
-    return this.executeSync(true)
+  async syncNow(options?: { silentSuccess?: boolean }): Promise<AutoSyncRunResult> {
+    return this.executeSync(true, options)
   }
 
   /** Recovery shares the controller's scheduler gate, without granting authorization. */
-  private async executeSync(authorize: boolean): Promise<AutoSyncRunResult> {
+  private async executeSync(authorize: boolean, options?: { silentSuccess?: boolean }): Promise<AutoSyncRunResult> {
     if (!authorize && (!this.autoSync.autoApplyAuthorized || this.autoSync.isRunning)) return this.cancelledSyncResult()
     this.cancelLiveCatchup(false)
     const revision = ++this.autoRequestRevision
@@ -1498,16 +1503,17 @@ export class Session {
         ? result.estimate.totalOffsetSeconds : offsetFromRewind(this.applied)
       this.planValue = result.plan
     }
-    if (authorize) this.reportAutoResult(result)
+    if (authorize) this.reportAutoResult(result, options)
     this.notify()
     return result
   }
 
-  private reportAutoResult(result: AutoSyncRunResult): void {
+  private reportAutoResult(result: AutoSyncRunResult, options?: { silentSuccess?: boolean }): void {
     if (result.failure) {
       this.notice(result.failure.kind === 'cancelled' ? 'info' : 'warn', result.failure.message, result.failure)
       return
     }
+    if (options?.silentSuccess && !result.dryRun) return
     const estimate = result.estimate
     if (!estimate) return
     const difference = estimate.residualSeconds
