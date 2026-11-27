@@ -9,6 +9,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { youtubeResolveQuality } from '../app/settings'
 import { hasDirectOptions, validateDirectOptions, type DirectStreamOptions } from '../core/directStream'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
 import { parseDouyinInput } from '../core/douyinInput'
@@ -273,9 +274,10 @@ export function SourceLoaderProvider({ children, onOpenSettings }: {
     let generation = session.beginSourceChange(role)
     const platformOf = parsed.platform
     try {
+      const youtubeQuality = parsed.platform === 'youtube' ? youtubeResolveQuality(session.settings) : null
       const result = await apiClient.resolve(
-        parsed.url, parsed.platform, role, undefined,
-        session.settings.preferAdaptive || undefined,
+        parsed.url, parsed.platform, role, youtubeQuality?.quality,
+        youtubeQuality ? youtubeQuality.preferAdaptive : (session.settings.preferAdaptive || undefined),
         ...(hasDirectOptions(direct) ? [direct] : []),
       )
       if (generation !== session.sourceRevision(role)) return false

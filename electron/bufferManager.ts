@@ -1,5 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -59,7 +60,7 @@ export interface HlsSegment { uri: string; duration: number; programDateTime?: s
 interface Segment extends HlsSegment { sequence: number; commercialBreak?: boolean }
 interface Run {
   id: number; child?: BufferChild; exited: boolean; finishing: boolean; lastSequence: number
-  poll?: unknown; refresh?: Promise<void>; finishTask?: Promise<void>; lastProgress: number; firstProgress?: number
+  poll?: unknown; watcher?: FSWatcher; watchDebounce?: ReturnType<typeof setTimeout>; refresh?: Promise<void>; finishTask?: Promise<void>; lastProgress: number; firstProgress?: number
   abort?: AbortController; transport?: AdaptiveTransport; pulling?: Promise<void>
   startedAt: number; lastPacketProgress: number; frame: number; outputTime: number; hasVideo: boolean; failure?: StreamFailure; proxy: boolean
   readFailure?: () => StreamFailure | undefined
@@ -209,11 +210,40 @@ export class BufferManager {
     this.states.set(state.role, state)
     for (const listener of this.listeners) { try { listener({ ...state }) } catch { /* Isolate observers. */ } }
   }
+  private closeWatcher(run?: Run): void {
+    if (!run) return
+    if (run.watchDebounce !== undefined) { clearTimeout(run.watchDebounce); run.watchDebounce = undefined }
+    if (run.watcher) {
+      try { run.watcher.close() } catch { /* Ignore watcher close failures. */ }
+      run.watcher = undefined
+    }
+  }
+  private attachWatcher(session: RoleSession, run: Run): void {
+    // Only attach real filesystem watchers when using the system clock so deterministic
+    // fake-clock tests stay driven exclusively by scheduled ticks.
+    if (this.options.clock || !this.current(session, run) || run.finishing) return
+    const target = `raw_${run.id}.m3u8`
+    try {
+      const watcher = watch(session.directory, (_event, filename) => {
+        if (!this.current(session, run) || run.finishing) { this.closeWatcher(run); return }
+        if (filename && String(filename) !== target) return
+        if (run.watchDebounce !== undefined) return
+        run.watchDebounce = setTimeout(() => {
+          run.watchDebounce = undefined
+          if (!this.current(session, run) || run.finishing) return
+          void this.refresh(session, run).catch(() => {})
+        }, 40)
+      })
+      watcher.on('error', () => { this.closeWatcher(run) })
+      run.watcher = watcher
+    } catch { /* Fall back cleanly to the polling timer. */ }
+  }
   private cancel(session: RoleSession): void {
     session.cancelled = true
     this.route.deactivate(session.role)
     if (session.retry !== undefined) this.clock.clearTimeout(session.retry)
     if (session.run?.poll !== undefined) this.clock.clearTimeout(session.run.poll)
+    this.closeWatcher(session.run)
     session.run?.abort?.abort()
     session.run?.transport?.close()
   }
@@ -305,6 +335,7 @@ export class BufferManager {
           })
       }
       this.emit(session, this.isReady(session, run) ? 'ready' : 'buffering')
+      this.attachWatcher(session, run)
       this.schedulePoll(session, run)
     } catch (error) {
       if (!this.current(session, run)) return
@@ -423,11 +454,13 @@ export class BufferManager {
       if (segment.programDateTime) lines.push(`#EXT-X-PROGRAM-DATE-TIME:${segment.programDateTime}`)
       lines.push(`#EXTINF:${segment.duration.toFixed(6)},`, segment.uri)
     }
+    const content = `${lines.join('\n')}\n`
     const temporary = path.join(session.directory, 'index.m3u8.tmp')
-    await writeFile(temporary, `${lines.join('\n')}\n`, { mode: 0o600 })
+    await writeFile(temporary, content, { mode: 0o600 })
     for (let attempt = 0; this.current(session); attempt++) {
       try {
         await rename(temporary, path.join(session.directory, 'index.m3u8'))
+        this.route.setPlaylist(session.role, session.generation, content)
         return
       } catch (error) {
         // Windows playlist readers briefly block replacement. Keep the complete old
@@ -445,6 +478,7 @@ export class BufferManager {
     run.abort?.abort()
     run.transport?.close()
     if (run.poll !== undefined) this.clock.clearTimeout(run.poll)
+    this.closeWatcher(run)
     run.finishTask = this.finishRun(session, run, reason)
     return run.finishTask
   }
@@ -482,6 +516,7 @@ export class BufferManager {
     if (!this.current(session)) return
     if (session.retry !== undefined) this.clock.clearTimeout(session.retry)
     if (session.run?.poll !== undefined) this.clock.clearTimeout(session.run.poll)
+    this.closeWatcher(session.run)
     if (session.run) session.run.finishing = true
     session.run?.abort?.abort()
     session.run?.transport?.close()
@@ -497,6 +532,7 @@ export class BufferManager {
     return result
   }
   private async cleanup(session: RoleSession): Promise<void> {
+    this.closeWatcher(session.run)
     session.run?.abort?.abort()
     session.run?.transport?.close()
     if (session.run?.child && !session.run.exited) await this.kill(session.run.child)

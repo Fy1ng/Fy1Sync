@@ -23,6 +23,10 @@ export function SessionProvider({
   return <SessionContext.Provider value={session}>{children}</SessionContext.Provider>
 }
 
+export function useOptionalSession(): Session | null {
+  return useContext(SessionContext)
+}
+
 export function useSession(): Session {
   const session = useContext(SessionContext)
   if (!session) throw new Error('useSession 必须在 SessionProvider 内使用')

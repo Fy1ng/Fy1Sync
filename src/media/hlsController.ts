@@ -204,7 +204,7 @@ export async function attachMedia(
     // hls.js only accepts liveMaxLatencyDurationCount together with an explicit
     // liveSyncDurationCount below it (it throws on construction otherwise), so the
     // default of 3 is spelled out.
-    liveSyncDurationCount: localBuffer ? 4 : 3,
+    liveSyncDurationCount: 3,
     liveMaxLatencyDurationCount: Infinity,
     maxLiveSyncPlaybackRate: 1,
     maxBufferLength: localBuffer ? 90 : 45,

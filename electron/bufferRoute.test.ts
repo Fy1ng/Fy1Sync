@@ -42,6 +42,10 @@ describe('active buffer capability route', () => {
     expect(response.headers.get('content-type')).toContain('mpegurl')
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(await response.text()).toBe('#EXTM3U\n')
+    f.route.setPlaylist('official', 'generation-1', '#EXTM3U\n#EXTINF:2,\nsegment_0_000000000.ts\n')
+    const cached = await f.route.handle(new Request(f.url))
+    expect(cached.status).toBe(200)
+    expect(await cached.text()).toBe('#EXTM3U\n#EXTINF:2,\nsegment_0_000000000.ts\n')
   })
   it.each(['bytes=2-5', 'bytes=2-', 'bytes=-3', 'bytes=0-999'])('serves single byte ranges: %s', async range => {
     const f = await fixture(), response = await f.route.handle(new Request(f.segment, { headers: { range } }))

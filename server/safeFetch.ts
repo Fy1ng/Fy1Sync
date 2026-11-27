@@ -148,7 +148,7 @@ function validAddresses(addresses: unknown): addresses is string[] {
 }
 
 /** The caller has already applied its HTTP or WebSocket address policy. */
-export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000, connections = 1, verifyTls = true, maxHeaderSize?: number): Agent {
+export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000, connections = 1, verifyTls = true, maxHeaderSize?: number, allowH2 = false): Agent {
   if (!validAddresses(addresses)) throw new ProxyError('dns-failed', '无法固定已校验的连接地址', 403)
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
   const records = [...new Set(addresses)].map(address => ({ address, family: isIP(address) }))
@@ -166,9 +166,11 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
   const multiAddress = records.length > 1
   const connectTimeoutMs = timeoutMs > 0 ? timeoutMs : DEFAULT_CONNECT_TIMEOUT_MS
   const connect = buildConnector({ lookup, timeout: connectTimeoutMs, autoSelectFamily: multiAddress,
-    ...(multiAddress ? { autoSelectFamilyAttemptTimeout: Math.max(10, Math.min(connectTimeoutMs, AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS)) } : {}), rejectUnauthorized: verifyTls })
+    ...(multiAddress ? { autoSelectFamilyAttemptTimeout: Math.max(10, Math.min(connectTimeoutMs, AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS)) } : {}),
+    ...(allowH2 ? { allowH2: true } : {}), rejectUnauthorized: verifyTls })
   return new Agent({
     connections, maxOrigins: 1, headersTimeout: timeoutMs, bodyTimeout: 0,
+    ...(allowH2 ? { allowH2: true } : {}),
     ...(maxHeaderSize === undefined ? {} : { maxHeaderSize }),
     keepAliveTimeout, keepAliveMaxTimeout: Math.max(keepAliveTimeout, 60_000),
     connect: (options, callback) => {
@@ -185,7 +187,7 @@ export class PinnedDispatcherPool {
   private readonly agents = new Map<string, Dispatcher>()
   private readonly retiring = new Set<Dispatcher>()
   private closed = false
-  constructor(private readonly options: { maxEntries?: number; connections?: number } = {}) {}
+  constructor(private readonly options: { maxEntries?: number; connections?: number; allowH2?: boolean } = {}) {}
   get(url: URL, addresses: string[], timeoutMs: number, route?: NetworkRoute, scope = '',
     tls: { verifyTls: boolean; verifyProxyTls: boolean } = { verifyTls: true, verifyProxyTls: true }, maxHeaderSize?: number): Dispatcher {
     if (this.closed) throw new Error('Network service closed')
@@ -199,9 +201,10 @@ export class PinnedDispatcherPool {
         void retiring.close().catch(() => {}).finally(() => this.retiring.delete(retiring))
         this.agents.delete(first)
       }
+      const allowH2 = this.options.allowH2 === true
       agent = route && route.kind !== 'direct'
-        ? createProxyDispatcher(route, timeoutMs, this.options.connections ?? 1, tls, maxHeaderSize, DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS)
-        : createPinnedDispatcher(url.hostname, addresses, timeoutMs, DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS, this.options.connections ?? 1, tls.verifyTls, maxHeaderSize)
+        ? createProxyDispatcher(route, timeoutMs, this.options.connections ?? 1, tls, maxHeaderSize, DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS, allowH2)
+        : createPinnedDispatcher(url.hostname, addresses, timeoutMs, DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS, this.options.connections ?? 1, tls.verifyTls, maxHeaderSize, allowH2)
       this.agents.set(key, agent)
     }
     return agent

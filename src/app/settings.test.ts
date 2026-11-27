@@ -161,10 +161,17 @@ describe('mergeSettings', () => {
 
   it('keeps optional adaptive acquisition disabled for old and malformed settings', () => {
     expect(DEFAULT_SETTINGS.preferAdaptive).toBe(true)
+    expect(DEFAULT_SETTINGS.youtubeDefaultQuality).toBe('1440p')
     expect(mergeSettings({}).preferAdaptive).toBe(true)
+    expect(mergeSettings({}).youtubeDefaultQuality).toBe('1440p')
     expect(mergeSettings({ preferAdaptive: 'true' }).preferAdaptive).toBe(true)
     expect(mergeSettings({ preferAdaptive: true }).preferAdaptive).toBe(true)
     expect(mergeSettings({ preferAdaptive: false }).preferAdaptive).toBe(false)
+    expect(mergeSettings({ preferAdaptive: false }).youtubeDefaultQuality).toBe('1080p')
+    expect(mergeSettings({ youtubeDefaultQuality: 'highest' }).youtubeDefaultQuality).toBe('highest')
+    expect(mergeSettings({ youtubeDefaultQuality: '1440p' }).youtubeDefaultQuality).toBe('1440p')
+    expect(mergeSettings({ youtubeDefaultQuality: '1080p' }).youtubeDefaultQuality).toBe('1080p')
+    expect(mergeSettings({ youtubeDefaultQuality: '4k' }).youtubeDefaultQuality).toBe('1440p')
   })
 
   it('drops removed visual preferences while preserving existing danmaku settings', () => {

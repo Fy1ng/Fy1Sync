@@ -11,6 +11,8 @@ import { displayError } from '../../core/errorDetails'
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { apiClient } from '../../app/apiClient'
+import { useOptionalSession } from '../../app/SessionContext'
+import { loadSettings, youtubeResolveQuality, type AppSettings } from '../../app/settings'
 import { EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStreamDraft, type DirectStreamOptions } from '../../core/directStream'
 import { parseSourceInput } from '../../core/mediaSources'
 import type { PipState } from '../../../electron/pipManager'
@@ -254,7 +256,12 @@ export function ExtraStreams({ adding, onAddingChange, primaryRef, children }: {
 }
 
 /** What to send for what was typed: a bare room needs its platform, a link speaks for itself. */
-export function openInputFor(text: string, roomPlatform: RoomPlatform, direct?: DirectStreamOptions): OpenStreamInput {
+export function openInputFor(
+  text: string,
+  roomPlatform: RoomPlatform,
+  direct?: DirectStreamOptions,
+  youtubeSettings?: Pick<AppSettings, 'youtubeDefaultQuality' | 'preferAdaptive'>,
+): OpenStreamInput {
   const typed = parseRoomInput(text)
   if (typed) return { input: typed.room, platform: typed.platform ?? roomPlatform }
   const trimmed = text.trim()
@@ -267,6 +274,14 @@ export function openInputFor(text: string, roomPlatform: RoomPlatform, direct?: 
       ...(hasDirectOptions(direct) ? { direct } : {}),
     }
   }
+  if (parsed.ok && parsed.platform === 'youtube' && youtubeSettings) {
+    const resolved = youtubeResolveQuality(youtubeSettings)
+    return {
+      input: trimmed,
+      ...(resolved.quality ? { quality: resolved.quality } : {}),
+      ...(resolved.preferAdaptive ? { preferAdaptive: true } : {}),
+    }
+  }
   return { input: trimmed }
 }
 
@@ -276,6 +291,7 @@ function AddStreamForm({ full, mode, onModeChange, onOpened }: {
   onModeChange: (mode: StreamLayoutMode) => void
   onOpened: (view: StreamSessionView) => void
 }): React.ReactNode {
+  const session = useOptionalSession()
   const [text, setText] = useState('')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>('douyu')
   const [directDraft, setDirectDraft] = useState<DirectStreamDraft>({ ...EMPTY_DIRECT_DRAFT })
@@ -296,7 +312,7 @@ function AddStreamForm({ full, mode, onModeChange, onOpened }: {
       }
       setBusy(true)
       setProblem(null)
-      void apiClient.feature('openStreamSession', openInputFor(text, roomPlatform, parsedDirect.options)).then((result) => {
+      void apiClient.feature('openStreamSession', openInputFor(text, roomPlatform, parsedDirect.options, session?.settings ?? loadSettings())).then((result) => {
         setBusy(false)
         if (result.ok) onOpened(result.value)
         else setProblem(result)

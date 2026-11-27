@@ -289,8 +289,23 @@ function YouTubeAccount(): React.ReactNode {
       {message && <p className="muted" role="status">{message}</p>}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
-      <Switch label="自动使用最高画质" detail="网络较慢时可关闭"
-        checked={settings.preferAdaptive} onChange={(preferAdaptive) => session.updateSettings({ preferAdaptive })} />
+      <div className="field-stack">
+        <span className="field-label">默认清晰度</span>
+        <Segmented
+          label="YouTube 默认清晰度"
+          value={settings.youtubeDefaultQuality}
+          onChange={(youtubeDefaultQuality) => session.updateSettings({
+            youtubeDefaultQuality,
+            preferAdaptive: youtubeDefaultQuality !== '1080p',
+          })}
+          options={[
+            { value: '1080p', label: '1080p' },
+            { value: '1440p', label: '1440p' },
+            { value: 'highest', label: '最高' },
+          ]}
+        />
+        <p className="muted">默认优先 1440p，兼顾画质与流畅度；无对应档位时自动向下匹配，网络较慢可选 1080p</p>
+      </div>
     </Group>
   )
 }

@@ -33,7 +33,10 @@ export interface AdaptivePullOptions {
   now?: () => number
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>
   requestTimeoutMs?: number
+  bodyIdleTimeoutMs?: number
   maxSegmentBytes?: number
+  /** Bounded lookahead segment downloads per track when behind the advertised head. */
+  prefetch?: number
   progress?: (event: { track: 'probe' | 'video' | 'audio'; phase: 'received' | 'written'; sq: number; head: number; bytes: number }) => void
 }
 
@@ -49,6 +52,10 @@ const MAX_PENDING_POLL_MS = 500
 const MIN_PENDING_WAIT_MS = 12_000
 const MAX_PENDING_POLLS = 60
 const DEFAULT_SEGMENT_TIMEOUT_MS = 15_000
+const DEFAULT_BODY_IDLE_TIMEOUT_MS = 6_000
+const DEFAULT_PREFETCH_AHEAD = 2
+const MAX_PREFETCH_AHEAD = 4
+const FIRST_RETRY_BACKOFF_MS = 150
 const policy: ProxyConfig = {
   enabled: true, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false,
   maxRedirects: 3, requestTimeoutMs: DEFAULT_SEGMENT_TIMEOUT_MS,
@@ -162,7 +169,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-async function readBounded(response: Response, limit: number, signal: AbortSignal): Promise<Buffer> {
+async function readBounded(response: Response, limit: number, signal: AbortSignal, idleTimeoutMs = 0): Promise<Buffer> {
   const size = Number(response.headers.get('content-length'))
   if (Number.isFinite(size) && size > limit) {
     void response.body?.cancel().catch(() => {})
@@ -174,7 +181,18 @@ async function readBounded(response: Response, limit: number, signal: AbortSigna
   let bytes = 0
   try {
     while (true) {
-      const chunk = await abortable(reader.read(), signal)
+      let idleTimer: ReturnType<typeof setTimeout> | undefined
+      const readStep = idleTimeoutMs > 0
+        ? Promise.race([
+          reader.read(),
+          new Promise<never>((_resolve, reject) => {
+            idleTimer = setTimeout(() => reject(new AdaptivePullError('adaptive-request-failed')), idleTimeoutMs)
+          }),
+        ])
+        : reader.read()
+      let chunk: ReadableStreamReadResult<Uint8Array>
+      try { chunk = await abortable(readStep, signal) }
+      finally { if (idleTimer !== undefined) clearTimeout(idleTimer) }
       if (chunk.done) break
       bytes += chunk.value.byteLength
       if (bytes > limit) throw new AdaptivePullError('adaptive-segment-too-large')
@@ -228,11 +246,17 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
   const configuredRetries = options.network?.media?.reconnectAttempts
   const maxAttempts = configuredRetries && configuredRetries > 0 ? Math.min(configuredRetries, 6) : MAX_ATTEMPTS
   const maxBytes = options.maxSegmentBytes ?? 32 * 1024 * 1024
+  const bodyIdleTimeoutMs = options.bodyIdleTimeoutMs
+    ?? (timeoutMs > DEFAULT_BODY_IDLE_TIMEOUT_MS ? DEFAULT_BODY_IDLE_TIMEOUT_MS : 0)
+  const prefetchCount = options.prefetch === undefined
+    ? DEFAULT_PREFETCH_AHEAD
+    : Math.max(0, Math.min(MAX_PREFETCH_AHEAD, Math.floor(options.prefetch)))
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647
+    || !Number.isSafeInteger(bodyIdleTimeoutMs) || bodyIdleTimeoutMs < 0 || bodyIdleTimeoutMs > 2_147_483_647
     || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024 * 1024) {
     throw new AdaptivePullError('adaptive-request-failed')
   }
-  const dispatcherPool = options.fetchImpl ? undefined : new PinnedDispatcherPool({ connections: 4 })
+  const dispatcherPool = options.fetchImpl ? undefined : new PinnedDispatcherPool({ connections: 6, allowH2: true })
   const controller = new AbortController()
   const signal = AbortSignal.any([controller.signal, options.signal, ...(options.network?.signal ? [options.network.signal] : [])])
   const now = options.now ?? Date.now
@@ -266,7 +290,8 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
           const { response } = await safeFetch(url.toString(), policy, {
             fetchImpl: checkedFetch, network: options.network, resolve: options.resolve, signal: requestSignal,
             headers: { Accept: '*/*' },
-            ...(dispatcherPool && attempt === 0 ? { dispatcherPool, connectionScope: base } : {}),
+            // Share one per-session pool across video/audio tracks on the same googlevideo origin.
+            ...(dispatcherPool && attempt === 0 ? { dispatcherPool, connectionScope: 'adaptive' } : {}),
           })
           const headersAt = now()
           if (response.status === 403 || response.status === 410) {
@@ -309,7 +334,7 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
             void response.body?.cancel().catch(() => {})
             throw new AdaptivePullError('adaptive-invalid-head')
           }
-          return { head, bytes: await readBounded(response, maxBytes, requestSignal), observedAt: startedAt }
+          return { head, bytes: await readBounded(response, maxBytes, requestSignal, bodyIdleTimeoutMs), observedAt: startedAt }
         })()
         const result = await abortable(operation, requestSignal)
         if (result) return result
@@ -323,7 +348,8 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
         if (attempt === maxAttempts - 1) throw new AdaptivePullError('adaptive-request-failed', safe.status)
         attempt++
       } finally { clearTimeout(timer) }
-      await wait(notPublishedDelayMs ?? Math.min(attempt, 6) * 350, signal)
+      const retryDelayMs = attempt === 1 ? FIRST_RETRY_BACKOFF_MS : Math.min(attempt, 6) * 350
+      await wait(notPublishedDelayMs ?? retryDelayMs, signal)
     }
     throw new AdaptivePullError('adaptive-request-failed')
   }
@@ -341,19 +367,52 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
       const start = Math.max(0, first.head - behindHeadFor(estimator.durationMs()))
       const pull = async (base: string, output: Writable, track: 'video' | 'audio'): Promise<void> => {
         let sq = start
-        while (!signal.aborted) {
-          const item = await segment(base, sq)
-          options.progress?.({ track, phase: 'received', sq, head: item.head, bytes: item.bytes.length })
-          await writeBytes(output, item.bytes, signal)
-          options.progress?.({ track, phase: 'written', sq, head: item.head, bytes: item.bytes.length })
-          sq++
-          // Drain already advertised segments so the muxer can seal its first GOP and
-          // playback has a complete segment ahead. Pace only once the advertised head is reached,
-          // subtracting request, download and pipe-write elapsed time from the segment cadence.
-          const delay = Math.max(0, (sq - item.head) * estimator.durationMs() - (now() - item.observedAt))
-          if (delay > 0) await wait(delay, signal)
+        let knownHead = first.head
+        let warmed = false
+        const inflight = new Map<number, Promise<{ head: number; bytes: Buffer; observedAt: number }>>()
+        const enqueue = (targetSq: number): Promise<{ head: number; bytes: Buffer; observedAt: number }> => {
+          let pending = inflight.get(targetSq)
+          if (!pending) {
+            pending = segment(base, targetSq)
+            // Attach a no-op handler so a prefetched failure rejected before its turn
+            // does not surface as an unhandled rejection; it still throws when awaited in order.
+            void pending.catch(() => {})
+            inflight.set(targetSq, pending)
+          }
+          return pending
         }
-        throw abortError()
+        const fillPrefetch = (fromSq: number, maxInflight: number): void => {
+          if (!warmed || prefetchCount <= 0 || signal.aborted) return
+          const limit = Math.min(knownHead, fromSq + prefetchCount - 1)
+          for (let nextSq = fromSq; nextSq <= limit && inflight.size < maxInflight; nextSq++) {
+            enqueue(nextSq)
+          }
+        }
+        try {
+          while (!signal.aborted) {
+            const current = enqueue(sq)
+            fillPrefetch(sq + 1, prefetchCount + 1)
+            const item = await current
+            inflight.delete(sq)
+            warmed = true
+            if (item.head > knownHead) knownHead = item.head
+            options.progress?.({ track, phase: 'received', sq, head: item.head, bytes: item.bytes.length })
+            // Keep at most `prefetchCount` already-advertised segments downloading while writing
+            // the current segment; pipe backpressure naturally halts further enqueues.
+            fillPrefetch(sq + 1, prefetchCount)
+            await writeBytes(output, item.bytes, signal)
+            options.progress?.({ track, phase: 'written', sq, head: item.head, bytes: item.bytes.length })
+            sq++
+            // Drain already advertised segments so the muxer can seal its first GOP and
+            // playback has a complete segment ahead. Pace only once the advertised head is reached,
+            // subtracting request, download and pipe-write elapsed time from the segment cadence.
+            const delay = Math.max(0, (sq - item.head) * estimator.durationMs() - (now() - item.observedAt))
+            if (delay > 0) await wait(delay, signal)
+          }
+          throw abortError()
+        } finally {
+          inflight.clear()
+        }
       }
       const video = pull(source.videoUrl, options.video, 'video')
       const audio = pull(source.audioUrl, options.audio, 'audio')

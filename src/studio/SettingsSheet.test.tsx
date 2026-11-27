@@ -594,6 +594,22 @@ describe('settings account navigation', () => {
     expect(read).toHaveBeenCalledTimes(2)
   })
 
+  it('defaults YouTube quality to 1440p and persists changes across 1080p, 1440p and highest', async () => {
+    const { session } = mount()
+    section('账号')
+    platform('YouTube')
+    const group = screen.getByRole('radiogroup', { name: 'YouTube 默认清晰度' })
+    expect(within(group).getByRole('radio', { name: '1440p' })).toBeChecked()
+    await act(async () => { fireEvent.click(within(group).getByRole('radio', { name: '1080p' })) })
+    expect(session.settings.youtubeDefaultQuality).toBe('1080p')
+    expect(session.settings.preferAdaptive).toBe(false)
+    expect(loadSettings()).toMatchObject({ youtubeDefaultQuality: '1080p', preferAdaptive: false })
+    await act(async () => { fireEvent.click(within(group).getByRole('radio', { name: '最高' })) })
+    expect(session.settings.youtubeDefaultQuality).toBe('highest')
+    expect(session.settings.preferAdaptive).toBe(true)
+    expect(loadSettings()).toMatchObject({ youtubeDefaultQuality: 'highest', preferAdaptive: true })
+  })
+
   it.each([
     { page: '网络', method: 'getNetworkPreferences' as const, loading: '正在读取', control: '保存取流网络设置',
       value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } } },
