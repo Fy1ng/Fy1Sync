@@ -30,6 +30,13 @@ import { Intake } from './Intake'
 import { Icon, popoverTrigger } from './kit'
 import { PipButton } from './PipButton'
 import { PreviewPip } from './PreviewPip'
+import {
+  assessOfficialHealth,
+  cameraActivateHint,
+  fallbackPreviewBadge,
+  isOfficialUnhealthy,
+  type OfficialFallbackState,
+} from './officialFallback'
 import type { RecordsTab } from './records/DanmakuRecords'
 import { ScheduleSheet } from './schedule/ScheduleSheet'
 import { prefetchSchedule } from './schedule/store'
@@ -101,6 +108,10 @@ function StudioView({ settingsAt, setSettingsAt }: {
   const [tuning, setTuning] = useState(false)
   const [framing, setFraming] = useState(false)
   const [previewHidden, setPreviewHidden] = useState(false)
+  const [officialFallback, setOfficialFallback] = useState<OfficialFallbackState | null>(null)
+  const fallbackSyncRun = useRef(0)
+  const fallbackSyncOwned = useRef(false)
+  const fallbackActivated = useRef(false)
   const [addingStream, setAddingStream] = useState(false)
   // 赛程 opens over 添加直播间 or the player and closes back to whichever is behind it.
   const [scheduleFrom, setScheduleFrom] = useState<'intake' | 'source' | null>(null)
@@ -153,6 +164,134 @@ function StudioView({ settingsAt, setSettingsAt }: {
   const otherRole: SourceRole = mainRole === 'official' ? 'commentary' : 'official'
   const mainMedia = snapshot.media[mainRole]
   const otherMedia = snapshot.media[otherRole]
+  const officialHealth = assessOfficialHealth(snapshot)
+  const officialUnhealthy = isOfficialUnhealthy(officialHealth)
+  const officialAutoSyncRunning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
+
+  const enterOfficialFallback = useCallback(() => {
+    if (session.snapshot.mainRole !== 'official' || session.snapshot.media.official.status === 'empty') return
+    const health = assessOfficialHealth(session.snapshot)
+    const needsSync = isOfficialUnhealthy(health) || session.snapshot.playbackRecovery !== null
+    fallbackSyncRun.current++
+    fallbackSyncOwned.current = false
+    fallbackActivated.current = false
+    setOfficialFallback({
+      phase: needsSync ? 'waiting' : 'watching',
+      restorePreviewHidden: previewHidden,
+      restoreCamera: Boolean(camera.config?.enabled),
+      syncAttempted: false,
+    })
+    setPreviewHidden(false)
+    session.setMainRole('commentary')
+  }, [camera.config?.enabled, previewHidden, session])
+
+  const handlePreviewSwap = useCallback(() => {
+    if (officialFallback && mainRole === 'commentary' && otherRole === 'official') {
+      fallbackSyncRun.current++
+      fallbackSyncOwned.current = false
+      fallbackActivated.current = false
+      setPreviewHidden(officialFallback.restorePreviewHidden)
+      if (officialFallback.restoreCamera && camera.config && !camera.config.enabled) {
+        camera.setEnabled(true)
+      }
+      setOfficialFallback(null)
+      session.setMainRole('official')
+      return
+    }
+    session.swapRoles()
+  }, [camera, mainRole, officialFallback, otherRole, session])
+
+  useEffect(() => {
+    if (!officialFallback) return
+    if (snapshot.media.official.status === 'empty' || snapshot.media.commentary.status === 'empty') {
+      fallbackSyncRun.current++
+      fallbackSyncOwned.current = false
+      fallbackActivated.current = false
+      setOfficialFallback(null)
+      return
+    }
+    if (mainRole !== 'commentary') {
+      // Wait for Session's microtask notification to deliver mainRole='commentary' right after switching.
+      if (!fallbackActivated.current) return
+      fallbackSyncRun.current++
+      fallbackSyncOwned.current = false
+      fallbackActivated.current = false
+      setOfficialFallback(null)
+      return
+    }
+    fallbackActivated.current = true
+    if (officialUnhealthy) {
+      if (officialFallback.phase !== 'waiting' || officialFallback.syncAttempted) {
+        fallbackSyncRun.current++
+        fallbackSyncOwned.current = false
+        setOfficialFallback((prev) => (prev ? { ...prev, phase: 'waiting', syncAttempted: false } : null))
+      }
+      return
+    }
+    if (officialFallback.phase === 'watching' && snapshot.playbackRecovery !== null) {
+      setOfficialFallback((prev) => (prev ? { ...prev, phase: 'waiting', syncAttempted: false } : null))
+      return
+    }
+    if (officialFallback.phase === 'waiting' && officialAutoSyncRunning) {
+      fallbackSyncOwned.current = false
+      setOfficialFallback((prev) => (prev ? { ...prev, phase: 'syncing', syncAttempted: true } : null))
+      return
+    }
+    if (officialFallback.phase === 'syncing' && !officialAutoSyncRunning && !fallbackSyncOwned.current) {
+      const result = snapshot.autoSync.lastResult
+      const synced = snapshot.autoSync.phase === 'done' && Boolean(result?.applied && !result.dryRun && !result.failure)
+      setOfficialFallback((prev) => (prev ? { ...prev, phase: synced ? 'synced' : 'recovered', syncAttempted: true } : null))
+      if (synced) session.notice('info', '官方画面已恢复并同步，点击小窗可切回')
+      return
+    }
+    if (
+      officialFallback.phase === 'waiting'
+      && !officialFallback.syncAttempted
+      && officialHealth === 'healthy'
+      && snapshot.autoSync.ready
+      && snapshot.playing
+      && !officialAutoSyncRunning
+      && !session.offsetBusy
+    ) {
+      const runId = ++fallbackSyncRun.current
+      fallbackSyncOwned.current = true
+      setOfficialFallback((prev) => (prev ? { ...prev, phase: 'syncing', syncAttempted: true } : null))
+      void session.syncNow({ silentSuccess: true }).then((result) => {
+        if (fallbackSyncRun.current !== runId) return
+        fallbackSyncOwned.current = false
+        const currentHealth = assessOfficialHealth(session.snapshot)
+        if (isOfficialUnhealthy(currentHealth)) {
+          setOfficialFallback((prev) => (prev ? { ...prev, phase: 'waiting', syncAttempted: false } : null))
+          return
+        }
+        const synced = Boolean(result.applied && !result.dryRun && !result.failure)
+        setOfficialFallback((prev) => (prev ? { ...prev, phase: synced ? 'synced' : 'recovered', syncAttempted: true } : null))
+        if (synced) session.notice('info', '官方画面已恢复并同步，点击小窗可切回')
+      }).catch(() => {
+        if (fallbackSyncRun.current !== runId) return
+        fallbackSyncOwned.current = false
+        setOfficialFallback((prev) => (prev ? { ...prev, phase: 'recovered', syncAttempted: true } : null))
+      })
+    }
+  }, [
+    mainRole,
+    officialAutoSyncRunning,
+    officialFallback,
+    officialHealth,
+    officialUnhealthy,
+    session,
+    snapshot.autoSync.lastResult,
+    snapshot.autoSync.phase,
+    snapshot.autoSync.ready,
+    snapshot.media.commentary.status,
+    snapshot.media.official.status,
+    snapshot.playbackRecovery,
+    snapshot.playing,
+  ])
+
+  const previewStatusBadge = officialFallback && otherRole === 'official'
+    ? fallbackPreviewBadge(officialFallback.phase, officialHealth)
+    : null
   const mainCommercialBreak = isCommercialBreakActive({
     platform: mainMedia.descriptor?.platform,
     status: mainMedia.status,
@@ -316,7 +455,19 @@ function StudioView({ settingsAt, setSettingsAt }: {
                   </button>
                 </div>
               )}
-              {camera.available && camera.config && <CameraOverlay key={camera.room} config={camera.config} onWindow={camera.setWindow} stageRef={primary} fitStage={split} onUpscaleState={setCameraUpscale} />}
+              {mainRole === 'official' && camera.available && camera.config && (
+                <CameraOverlay
+                  key={camera.room}
+                  config={camera.config}
+                  onWindow={camera.setWindow}
+                  stageRef={primary}
+                  fitStage={split}
+                  onUpscaleState={setCameraUpscale}
+                  onActivate={snapshot.media.official.status !== 'empty' ? enterOfficialFallback : undefined}
+                  attention={officialUnhealthy}
+                  activateHint={cameraActivateHint(officialHealth)}
+                />
+              )}
 
               {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
                 <PreviewPip
@@ -325,7 +476,8 @@ function StudioView({ settingsAt, setSettingsAt }: {
                   stageRef={primary}
                   fitStage={split}
                   commercialBreak={otherCommercialBreak}
-                  onSwap={() => session.swapRoles()}
+                  statusBadge={previewStatusBadge}
+                  onSwap={handlePreviewSwap}
                   onHide={() => setPreviewHidden(true)}
                 />
               ) : (

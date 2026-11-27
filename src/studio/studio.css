@@ -826,10 +826,20 @@ body,
   border-radius: 4px;
 }
 
-.studio .pip-ad-badge {
+.studio .pip-badges {
   position: absolute;
   left: 8px;
   top: 8px;
+  right: 38px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.studio .pip-ad-badge {
   padding: 1px 7px;
   font-size: 11px;
   font-weight: 600;
@@ -837,6 +847,66 @@ body,
   background: var(--smoke-deep);
   border: 1px solid color-mix(in srgb, var(--drift) 40%, transparent);
   border-radius: 4px;
+}
+
+.studio .pip-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--chalk);
+  background: var(--smoke-deep);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.studio .pip-status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ash);
+}
+
+.studio .pip-status-badge[data-tone='busy'] {
+  border-color: color-mix(in srgb, var(--drift) 48%, transparent);
+}
+
+.studio .pip-status-badge[data-tone='busy'] .pip-status-dot {
+  background: var(--drift);
+}
+
+.studio .pip-status-badge[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--bad, #f87171) 52%, transparent);
+}
+
+.studio .pip-status-badge[data-tone='warn'] .pip-status-dot {
+  background: var(--bad, #f87171);
+}
+
+.studio .pip-status-badge[data-tone='ready'] {
+  color: #e8fff4;
+  border-color: color-mix(in srgb, var(--good, #6fd3a8) 60%, transparent);
+}
+
+.studio .pip-status-badge[data-tone='ready'] .pip-status-dot {
+  background: var(--good, #6fd3a8);
+}
+
+.studio .pip[data-status-tone='ready'] .pip-swap {
+  border-color: color-mix(in srgb, var(--good, #6fd3a8) 72%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--good, #6fd3a8) 35%, transparent);
+}
+
+.studio .pip[data-status-tone='busy'] .pip-swap {
+  border-color: color-mix(in srgb, var(--drift) 50%, transparent);
 }
 
 .studio .commercial-banner {

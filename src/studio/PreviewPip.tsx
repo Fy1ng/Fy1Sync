@@ -22,6 +22,7 @@ import {
   type ResizeHandle,
 } from '../ui/floatingWindow'
 import { Icon } from './kit'
+import type { PreviewStatusBadge } from './officialFallback'
 import { ROLE_LABEL } from './sources'
 
 export const PREVIEW_WINDOW_STORAGE_KEY = 'studio.previewWindow.v1'
@@ -70,6 +71,7 @@ export function PreviewPip({
   stageRef,
   fitStage = false,
   commercialBreak = false,
+  statusBadge = null,
   onSwap,
   onHide,
 }: {
@@ -78,6 +80,7 @@ export function PreviewPip({
   stageRef: React.RefObject<HTMLDivElement | null>
   fitStage?: boolean
   commercialBreak?: boolean
+  statusBadge?: PreviewStatusBadge | null
   onSwap: () => void
   onHide: () => void
 }): React.ReactNode {
@@ -314,6 +317,7 @@ export function PreviewPip({
       className="pip"
       data-role={role}
       data-placed={placed ? 'true' : undefined}
+      data-status-tone={statusBadge?.tone}
       style={placed}
       onKeyDown={onKeyDown}
     >
@@ -332,11 +336,21 @@ export function PreviewPip({
           onSwap()
         }}
         aria-label={`将${ROLE_LABEL[role]}切换为主画面`}
-        title="切换为主画面"
+        title={statusBadge ? statusBadge.text : '切换为主画面'}
       >
         <span className="pip-mount" ref={mountRef} />
-        {commercialBreak && (
-          <span className="pip-ad-badge" title={TWITCH_COMMERCIAL_BREAK_NOTICE}>{TWITCH_COMMERCIAL_BREAK_BADGE}</span>
+        {(statusBadge || commercialBreak) && (
+          <span className="pip-badges">
+            {statusBadge && (
+              <span className="pip-status-badge" data-tone={statusBadge.tone} role="status">
+                <span className="pip-status-dot" aria-hidden="true" />
+                {statusBadge.text}
+              </span>
+            )}
+            {commercialBreak && (
+              <span className="pip-ad-badge" title={TWITCH_COMMERCIAL_BREAK_NOTICE}>{TWITCH_COMMERCIAL_BREAK_BADGE}</span>
+            )}
+          </span>
         )}
         <span className="pip-label">{ROLE_LABEL[role]}</span>
       </button>

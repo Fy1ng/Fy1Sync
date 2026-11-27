@@ -38,9 +38,24 @@ interface Props {
   stageRef: React.RefObject<HTMLDivElement | null>
   fitStage?: boolean
   onUpscaleState?: (state: CameraUpscaleState) => void
+  /** Called on a clean click (without dragging) or Enter/Space activation. */
+  onActivate?: () => void
+  /** Short hint shown on hover, or continuously when `attention` is true. */
+  activateHint?: string
+  /** Highlights the overlay when the official main stream is impaired. */
+  attention?: boolean
 }
 
-export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, onUpscaleState }: Props): React.ReactNode {
+export function CameraOverlay({
+  config,
+  onWindow,
+  stageRef,
+  fitStage = false,
+  onUpscaleState,
+  onActivate,
+  activateHint,
+  attention = false,
+}: Props): React.ReactNode {
   const session = useSession()
   const { settings } = useSessionSnapshot()
   const belowDanmaku = settings.danmaku.danmakuOverCamera
@@ -50,12 +65,15 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
   const box = useRef<HTMLDivElement | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const handlesRef = useRef<HTMLDivElement | null>(null)
+  const suppressClick = useRef(false)
+  const suppressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const drag = useRef<{
     mode: 'move' | ResizeHandle
     pointerId: number
     x: number
     y: number
     origin: CameraWindow
+    started: boolean
     /** Where the window would land now; committed on release. */
     next: CameraWindow | null
     frame: number | null
@@ -68,6 +86,7 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
 
   useEffect(() => () => {
     if (drag.current?.frame != null) cancelAnimationFrame(drag.current.frame)
+    if (suppressTimer.current !== null) clearTimeout(suppressTimer.current)
     drag.current = null
     clearStageDragging()
   }, [clearStageDragging])
@@ -124,11 +143,24 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
     if (handlesRef.current) handlesRef.current.style.transform = value
   }
 
+  const markDragging = useCallback((): void => {
+    stageRef.current?.setAttribute('data-window-dragging', 'true')
+    box.current?.setAttribute('data-dragging', 'true')
+    window.dispatchEvent(new Event(RELEASE_DANMAKU_HOVER_EVENT))
+  }, [stageRef])
+
   const stepGesture = useCallback((clientX: number, clientY: number): void => {
     const state = drag.current
     if (!state || stage.width <= 0 || stage.height <= 0) return
     const dxPx = clientX - state.x
     const dyPx = clientY - state.y
+    if (!state.started) {
+      if (Math.hypot(dxPx, dyPx) < DRAG_THRESHOLD_PX) return
+      state.started = true
+      suppressClick.current = true
+      try { bodyRef.current?.setPointerCapture?.(state.pointerId) } catch { /* Window listeners stay active. */ }
+      markDragging()
+    }
     const next = state.mode === 'move'
       ? clampWindow({ ...state.origin, x: state.origin.x + dxPx / stage.width, y: state.origin.y + dyPx / stage.height }, stage, screenAspect)
       : clampWindow(resizeAspectWindow(state.origin, state.mode, dxPx, dyPx, stage, screenAspect, CAMERA_WIDTH_BOUNDS), stage, screenAspect)
@@ -141,7 +173,7 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
       state.frame = null
       if (drag.current === state && state.next) setDraft(state.next)
     })
-  }, [stage, screenAspect])
+  }, [markDragging, stage, screenAspect])
 
   const end = useCallback((): void => {
     const state = drag.current
@@ -152,22 +184,31 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
     applyTranslate(0, 0)
     clearStageDragging()
     setDraft(null)
-    if (state.next) onWindow(state.next)
+    if (state.started && state.next) {
+      onWindow(state.next)
+      if (suppressTimer.current !== null) clearTimeout(suppressTimer.current)
+      suppressTimer.current = setTimeout(() => { suppressClick.current = false; suppressTimer.current = null }, 0)
+    }
   }, [clearStageDragging, onWindow])
-
-  const markDragging = useCallback((): void => {
-    stageRef.current?.setAttribute('data-window-dragging', 'true')
-    box.current?.setAttribute('data-dragging', 'true')
-    window.dispatchEvent(new Event(RELEASE_DANMAKU_HOVER_EVENT))
-  }, [stageRef])
 
   const begin = (gestureMode: 'move' | ResizeHandle) => (event: React.PointerEvent<HTMLElement>): void => {
     if (event.button !== 0) return
-    event.preventDefault()
     event.stopPropagation()
-    try { event.currentTarget.setPointerCapture?.(event.pointerId) } catch { /* Synthetic pointer in tests. */ }
-    markDragging()
-    drag.current = { mode: gestureMode, pointerId: event.pointerId, x: event.clientX, y: event.clientY, origin: win, next: null, frame: null }
+    if (gestureMode !== 'move') {
+      event.preventDefault()
+      try { event.currentTarget.setPointerCapture?.(event.pointerId) } catch { /* Synthetic pointer in tests. */ }
+      markDragging()
+    }
+    drag.current = {
+      mode: gestureMode,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      origin: win,
+      started: gestureMode !== 'move',
+      next: null,
+      frame: null,
+    }
   }
 
   const move = (event: React.PointerEvent<HTMLElement>): void => {
@@ -213,8 +254,9 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
         const started = pending
         pending = null
         markDragging()
+        suppressClick.current = true
         try { bodyRef.current?.setPointerCapture?.(event.pointerId) } catch { /* Fallback window listeners stay active. */ }
-        drag.current = { mode: 'move', pointerId: event.pointerId, x: started.x, y: started.y, origin: started.origin, next: null, frame: null }
+        drag.current = { mode: 'move', pointerId: event.pointerId, x: started.x, y: started.y, origin: started.origin, started: true, next: null, frame: null }
         stepGesture(event.clientX, event.clientY)
         return
       }
@@ -259,6 +301,12 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
   }, [belowDanmaku, config.enabled, end, markDragging, stage.width, stageRef, stepGesture])
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (onActivate && (event.key === 'Enter' || event.key === ' ') && !event.repeat) {
+      event.preventDefault()
+      event.stopPropagation()
+      onActivate()
+      return
+    }
     if (event.key === '+' || event.key === '=' || event.key === '-' || event.key === '_') {
       const grow = event.key === '+' || event.key === '='
       const step = event.shiftKey ? 0.04 : 0.015
@@ -293,11 +341,15 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
       ref={box}
       className="camera-overlay"
       data-below-danmaku={belowDanmaku || undefined}
+      data-clickable={onActivate ? 'true' : undefined}
+      data-attention={attention || undefined}
       data-upscale-mode={mode}
       data-upscale-tier={tier}
       data-upscale-reason={reason}
       role="group"
-      aria-label="主播摄像头小窗，拖动移动，四边或四角缩放，方向键微调"
+      aria-label={onActivate
+        ? '主播摄像头小窗，点击切换至解说画面，拖动移动，四边或四角缩放，方向键微调'
+        : '主播摄像头小窗，拖动移动，四边或四角缩放，方向键微调'}
       tabIndex={0}
       style={{
         left: `${win.x * stage.width}px`,
@@ -310,6 +362,7 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
       <div
         ref={bodyRef}
         className="camera-body"
+        title={onActivate ? (activateHint ?? '点击切换至解说画面') : undefined}
         style={{
           borderRadius: `${win.radius}px`,
           borderWidth: `${win.border}px`,
@@ -319,10 +372,25 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
         onPointerUp={end}
         onPointerCancel={end}
         onLostPointerCapture={end}
+        onClick={(event) => {
+          if (!onActivate) return
+          if (suppressClick.current) {
+            suppressClick.current = false
+            event.preventDefault()
+            return
+          }
+          onActivate()
+        }}
       >
         <canvas ref={canvas} className="camera-canvas" style={{ visibility: mode === 'webgpu' ? 'hidden' : undefined, borderRadius: `${innerRadius}px` }} />
         {upscale.active && <canvas key={upscale.canvasKey} ref={upscale.canvas} className="camera-canvas camera-canvas-gpu"
           style={{ visibility: mode === 'webgpu' ? undefined : 'hidden', borderRadius: `${innerRadius}px` }} />}
+        {onActivate && activateHint && (
+          <span className="camera-switch-badge" data-attention={attention || undefined} aria-hidden="true">
+            {attention && <span className="camera-switch-dot" />}
+            {activateHint}
+          </span>
+        )}
       </div>
       <div ref={handlesRef} className="camera-handles" aria-hidden="true">
         {RESIZE_HANDLES.map((handle) => (
