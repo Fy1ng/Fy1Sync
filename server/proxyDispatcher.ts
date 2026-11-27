@@ -331,6 +331,7 @@ export function createProxyDispatcher(
   tls: { verifyTls?: boolean; verifyProxyTls?: boolean } = {},
   maxHeaderSize?: number,
   keepAliveTimeout = DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS,
+  allowH2 = false,
 ): Dispatcher {
   if ((route.kind !== 'http' && route.kind !== 'socks5') || !route.proxyUrl) throw new Error('系统代理类型不受支持')
   const proxy = new URL(route.proxyUrl)
@@ -369,11 +370,16 @@ export function createProxyDispatcher(
     bodyTimeout: 0,
     keepAliveTimeout,
     keepAliveMaxTimeout,
+    ...(allowH2 ? { allowH2: true } : {}),
     ...(maxHeaderSize === undefined ? {} : { maxHeaderSize }),
   }
   let inner: Dispatcher
   if (route.kind === 'socks5') {
-    const endpointConnect = buildConnector({ rejectUnauthorized: tls.verifyTls !== false, timeout: connectTimeoutMs })
+    const endpointConnect = buildConnector({
+      rejectUnauthorized: tls.verifyTls !== false,
+      timeout: connectTimeoutMs,
+      ...(allowH2 ? { allowH2: true } : {}),
+    })
     inner = new Agent({
       ...sharedPoolSettings,
       connect: (opts, callback) => {
@@ -404,11 +410,17 @@ export function createProxyDispatcher(
     inner = new ProxyAgent({
       ...sharedPoolSettings,
       uri: proxy.href,
-      requestTls: { rejectUnauthorized: tls.verifyTls !== false, timeout: connectTimeoutMs },
+      requestTls: {
+        rejectUnauthorized: tls.verifyTls !== false,
+        timeout: connectTimeoutMs,
+        ...(allowH2 ? { allowH2: true } : {}),
+      },
       proxyTls: { rejectUnauthorized: tls.verifyProxyTls !== false, timeout: connectTimeoutMs },
       // Use Pool so concurrent CONNECT tunnel setups do not serialize behind a single Client.
+      // Keep the proxy hop on HTTP/1.1 since local proxy servers negotiate CONNECT over HTTP/1.1.
       clientFactory: (origin, options) => new Pool(origin, {
         ...options,
+        allowH2: false,
         connect: tracked,
         headersTimeout: connectTimeoutMs,
         keepAliveTimeout,

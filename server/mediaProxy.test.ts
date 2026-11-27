@@ -398,4 +398,38 @@ describe('media fetch and HLS', () => {
     expect(abortCalls).toBe(1)
     await aborting.registry.dispose()
   })
+
+  it('requests compressed playlists and prefetches live HLS segments in gateway mode without duplicate fetches', async () => {
+    const upstreamUrls: string[] = []
+    const acceptEncodings = new Map<string, string | null>()
+    const upstream = vi.fn(async (input: Parameters<typeof fetch>[0], init: RequestInit = {}) => {
+      const url = String(input)
+      upstreamUrls.push(url)
+      acceptEncodings.set(url, new Headers(init.headers).get('accept-encoding'))
+      if (url.endsWith('.m3u8')) {
+        return new Response('#EXTM3U\n#EXTINF:2,\nseg1.ts\n#EXTINF:2,\nseg2.ts\n', {
+          headers: { 'content-type': 'application/vnd.apple.mpegurl' },
+        })
+      }
+      return new Response(`bytes:${url.slice(url.lastIndexOf('/') + 1)}`, {
+        headers: { 'content-type': 'video/mp2t' },
+      })
+    }) as unknown as typeof fetch
+    const f = fixture(PLAYLIST, { fetchImpl: upstream, publicOrigin: 'http://127.0.0.1:4321' })
+    const playlistRes = await f.registry.handle(request(f.url.replace('http://127.0.0.1:4321', 'app://app')))
+    const text = await playlistRes.text()
+    expect(acceptEncodings.get(TARGET)).toContain('gzip')
+    const segments = text.split('\n').filter(line => line.startsWith('http://127.0.0.1:4321/media/'))
+    expect(segments).toHaveLength(2)
+    for (const segUrl of segments) {
+      const res = await f.registry.handle(request(segUrl.replace('http://127.0.0.1:4321', 'app://app')))
+      expect(res.status).toBe(200)
+      expect(await res.text()).toMatch(/^bytes:seg[12]\.ts$/)
+    }
+    // Each segment was prefetched once and consumed from memory without triggering a second upstream fetch.
+    expect(upstreamUrls.filter(url => url.endsWith('seg1.ts'))).toHaveLength(1)
+    expect(upstreamUrls.filter(url => url.endsWith('seg2.ts'))).toHaveLength(1)
+    expect(acceptEncodings.get('https://video-weaver.ttvnw.net/live/seg1.ts')).toBe('identity')
+    await f.registry.dispose()
+  })
 })

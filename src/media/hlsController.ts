@@ -203,7 +203,7 @@ export async function attachMedia(
     // A deliberately rewound local live buffer must never catch up automatically.
     // hls.js only accepts liveMaxLatencyDurationCount together with an explicit
     // liveSyncDurationCount below it (it throws on construction otherwise), so the
-    // default of 3 is spelled out.
+    // default of 3 is spelled out. Local buffers keep 4 segments (~8s) for packet-loss resilience.
     liveSyncDurationCount: localBuffer ? 4 : 3,
     liveMaxLatencyDurationCount: Infinity,
     maxLiveSyncPlaybackRate: 1,

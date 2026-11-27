@@ -38,7 +38,8 @@ describe('adaptive sq acquisition', () => {
     }) as typeof fetch
     const h = harness(fetcher)
     await flush()
-    expect(calls).toEqual([0, 98, 98, 99, 99, 100, 100])
+    expect(calls[0]).toBe(0)
+    expect([...calls.slice(1)].sort((a, b) => a - b)).toEqual([98, 98, 99, 99, 100, 100])
     expect(h.video).toEqual(['media-98', 'media-99', 'media-100'])
     expect(h.audio).toEqual(['media-98', 'media-99', 'media-100'])
     h.controller.abort()
@@ -70,9 +71,14 @@ describe('adaptive sq acquisition', () => {
     }) as typeof fetch
     const h = harness(fetcher)
     await flush()
-    expect(calls).toEqual([{ sq: 0, track: 'v', at: 0 }, { sq: 98, track: 'v', at: 0 }, { sq: 98, track: 'a', at: 0 },
-      { sq: 99, track: 'v', at: 0 }, { sq: 99, track: 'a', at: 0 },
-      { sq: 100, track: 'v', at: 0 }, { sq: 100, track: 'a', at: 0 }])
+    expect(calls).toHaveLength(7)
+    expect(calls.filter(call => call.track === 'v')).toEqual([
+      { sq: 0, track: 'v', at: 0 }, { sq: 98, track: 'v', at: 0 },
+      { sq: 99, track: 'v', at: 0 }, { sq: 100, track: 'v', at: 0 },
+    ])
+    expect(calls.filter(call => call.track === 'a')).toEqual([
+      { sq: 98, track: 'a', at: 0 }, { sq: 99, track: 'a', at: 0 }, { sq: 100, track: 'a', at: 0 },
+    ])
     expect(h.video).toEqual(['v98', 'v99', 'v100'])
     expect(h.audio).toEqual(['a98', 'a99', 'a100'])
     await vi.advanceTimersByTimeAsync(4999)
@@ -108,7 +114,8 @@ describe('adaptive sq acquisition', () => {
       return response('bytes', '1')
     }) as typeof fetch)
     await flush()
-    expect(calls).toEqual([0, 0, 0, 1, 1])
+    expect(calls[0]).toBe(0)
+    expect([...calls.slice(1)].sort((a, b) => a - b)).toEqual([0, 0, 1, 1])
     h.controller.abort()
     await h.pending
   })
@@ -152,7 +159,7 @@ describe('adaptive sq acquisition', () => {
     expect(calls).toHaveLength(3)
   })
 
-  it('waits for pipe backpressure without allowing same-stream sq reordering', async () => {
+  it('waits for pipe backpressure with bounded prefetch and without same-stream sq reordering', async () => {
     vi.useFakeTimers()
     const writes: string[] = []
     let release: (() => void) | undefined
@@ -169,12 +176,13 @@ describe('adaptive sq acquisition', () => {
     }) as typeof fetch, { video })
     await flush()
     expect(writes).toEqual(['v8'])
-    expect(calls.filter(call => call.startsWith('v'))).toEqual(['v0', 'v8'])
+    // Bounded prefetch starts at most two advertised segments ahead while write is blocked.
+    expect(calls.filter(call => call.startsWith('v'))).toEqual(['v0', 'v8', 'v9', 'v10'])
     expect(h.audio).toEqual(['a8', 'a9', 'a10', 'a11', 'a12'])
     release!()
     await flush()
     expect(writes).toEqual(['v8', 'v9'])
-    expect(calls.filter(call => call.startsWith('v'))).toEqual(['v0', 'v8', 'v9'])
+    expect(calls.filter(call => call.startsWith('v'))).toEqual(['v0', 'v8', 'v9', 'v10', 'v11'])
     h.controller.abort()
     await h.pending
     release!()
@@ -283,15 +291,10 @@ describe('adaptive sq acquisition', () => {
     await flush()
     expect(h.video).toEqual(['redirected', 'redirected', 'redirected'])
     expect(h.audio).toEqual(['redirected', 'redirected', 'redirected'])
-    expect(publicDns.mock.calls.map(call => call[0])).toEqual([
-      'r1.example.googlevideo.com', 'r2.example.googlevideo.com',
-      'r1.example.googlevideo.com', 'r1.example.googlevideo.com',
-      'r2.example.googlevideo.com', 'r2.example.googlevideo.com',
-      'r1.example.googlevideo.com', 'r1.example.googlevideo.com',
-      'r2.example.googlevideo.com', 'r2.example.googlevideo.com',
-      'r1.example.googlevideo.com', 'r1.example.googlevideo.com',
-      'r2.example.googlevideo.com', 'r2.example.googlevideo.com',
-    ])
+    const dnsHosts = publicDns.mock.calls.map(call => call[0])
+    expect(dnsHosts).toHaveLength(14)
+    expect(dnsHosts.filter(host => host === 'r1.example.googlevideo.com')).toHaveLength(7)
+    expect(dnsHosts.filter(host => host === 'r2.example.googlevideo.com')).toHaveLength(7)
     h.controller.abort()
     await h.pending
   })
@@ -531,5 +534,117 @@ describe('adaptive sq acquisition', () => {
     await flush()
     await vi.advanceTimersByTimeAsync(15_000)
     expect(await pending).toMatchObject({ code: 'adaptive-request-failed', status: 404 })
+  })
+
+  it('prefetches advertised segments in parallel after warm-up and aborts stalled body reads via idle timeout', async () => {
+    vi.useFakeTimers()
+    let inflightVideo = 0
+    let maxInflightVideo = 0
+    let stalledOnce = false
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      const sq = Number(url.searchParams.get('sq'))
+      const isVideo = url.searchParams.get('token') === 'PRIVATE_VIDEO'
+      if (sq === 0) return response('probe', '100')
+      if (isVideo && sq >= 99) {
+        inflightVideo++
+        maxInflightVideo = Math.max(maxInflightVideo, inflightVideo)
+        try {
+          if (sq === 100 && !stalledOnce) {
+            stalledOnce = true
+            await new Promise(resolve => setTimeout(resolve, 40))
+            return new Response(new ReadableStream({
+              start(controller) { controller.enqueue(new TextEncoder().encode('partial')) },
+            }), { status: 200, headers: { 'x-head-seqnum': '100' } })
+          }
+          await new Promise(resolve => setTimeout(resolve, 40))
+        } finally {
+          inflightVideo--
+        }
+      }
+      return response(`${isVideo ? 'v' : 'a'}${sq}`, '100')
+    }) as typeof fetch
+    const h = harness(fetcher, { requestTimeoutMs: 5000, bodyIdleTimeoutMs: 200 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(600)
+    expect(maxInflightVideo).toBeGreaterThanOrEqual(2)
+    expect(h.video).toEqual(['v98', 'v99', 'v100'])
+    expect(h.audio).toEqual(['a98', 'a99', 'a100'])
+    h.controller.abort()
+    await h.pending
+  })
+
+  it('hedges a slow live segment with a parallel backup request and cancels the slow one', async () => {
+    vi.useFakeTimers()
+    let slowAborted = false
+    let video99Calls = 0
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const sq = Number(url.searchParams.get('sq'))
+      const isVideo = url.searchParams.get('token') === 'PRIVATE_VIDEO'
+      if (sq === 0) return response('probe', '100')
+      if (isVideo && sq === 99) {
+        video99Calls++
+        if (video99Calls === 1) {
+          return await new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              slowAborted = true
+              reject(new DOMException('aborted', 'AbortError'))
+            }, { once: true })
+          })
+        }
+        return response('v99-hedged', '100')
+      }
+      return response(`${isVideo ? 'v' : 'a'}${sq}`, '100')
+    }) as typeof fetch
+    const h = harness(fetcher, { requestTimeoutMs: 5000, headersTimeoutMs: 4000, hedgeDelayMs: 200 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(video99Calls).toBe(2)
+    expect(slowAborted).toBe(true)
+    expect(h.video).toEqual(['v98', 'v99-hedged', 'v100'])
+    h.controller.abort()
+    await h.pending
+  })
+
+  it('proactively refreshes signed URLs before expire without interrupting the stream', async () => {
+    vi.useFakeTimers()
+    const baseNow = 1_700_000_000_000
+    vi.setSystemTime(baseNow)
+    const expiringSoon = Math.floor((baseNow + 5 * 60_000) / 1000)
+    const freshExpire = Math.floor((baseNow + 6 * 3600_000) / 1000)
+    const expiringSource: AdaptiveSource = {
+      videoUrl: `https://r1.example.googlevideo.com/videoplayback?token=OLD_VIDEO&expire=${expiringSoon}&dur=2.000`,
+      audioUrl: `https://r1.example.googlevideo.com/videoplayback?token=OLD_AUDIO&expire=${expiringSoon}&dur=2.000`,
+      videoContainer: 'webm', height: 1440,
+    }
+    const refreshSource = vi.fn(async (): Promise<AdaptiveSource> => ({
+      videoUrl: `https://r2.example.googlevideo.com/videoplayback?token=NEW_VIDEO&expire=${freshExpire}&dur=2.000`,
+      audioUrl: `https://r2.example.googlevideo.com/videoplayback?token=NEW_AUDIO&expire=${freshExpire}&dur=2.000`,
+      videoContainer: 'webm', height: 1440,
+    }))
+    const seenTokens: string[] = []
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      const sq = Number(url.searchParams.get('sq'))
+      const token = url.searchParams.get('token') ?? ''
+      seenTokens.push(`${token}:${sq}`)
+      const elapsed = Date.now() - baseNow
+      const head = 100 + Math.floor(elapsed / 2000)
+      return response(`${token}:${sq}`, String(head))
+    }) as typeof fetch
+    const controller = new AbortController()
+    const video: string[] = [], audio: string[] = []
+    const pending = pullAdaptive(expiringSource, {
+      video: sink(video), audio: sink(audio), signal: controller.signal,
+      resolve: publicDns, fetchImpl: fetcher, refreshSource,
+    }).catch((error: unknown) => error)
+    await flush()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(refreshSource).toHaveBeenCalledOnce()
+    expect(seenTokens.some(entry => entry.startsWith('NEW_VIDEO:'))).toBe(true)
+    expect(seenTokens.some(entry => entry.startsWith('NEW_AUDIO:'))).toBe(true)
+    controller.abort()
+    await pending
   })
 })

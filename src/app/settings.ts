@@ -21,6 +21,8 @@ import { DEFAULT_SHORTCUTS, normalizeShortcuts, type ShortcutBindings } from './
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
 export type CameraUpscaleTier = 'off' | 'performance' | 'quality'
+/** Default YouTube live stream target quality. */
+export type YouTubeDefaultQuality = '1080p' | '1440p' | 'highest'
 /** Previous saved mode values are normalized to frame-hash when settings are loaded. */
 export type RecognitionMode = 'frame-hash'
 
@@ -66,6 +68,8 @@ export interface AppSettings {
   sidebarVisible: boolean
   /** Prefer optional YouTube adaptive qualities when the token provider is available. */
   preferAdaptive: boolean
+  /** Preferred default YouTube live quality ceiling ('1080p', '1440p', or 'highest'). */
+  youtubeDefaultQuality: YouTubeDefaultQuality
   cameraUpscale: CameraUpscaleTier
   /**
    * Experimental: anything that writes to Douyu as the viewer (sending, +1, mute, gifts, room
@@ -107,6 +111,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarVisible: true,
   // On: YouTube's adaptive formats are where 1440p and up live; the HLS ladder stops lower.
   preferAdaptive: true,
+  youtubeDefaultQuality: '1440p',
   cameraUpscale: 'performance',
   douyuWrites: false,
 }
@@ -169,6 +174,13 @@ export function mergeSettings(raw: unknown): AppSettings {
     ? normalizeBasicClockRoi(stored.basicClockRoi)
     : normalizeBasicClockRoi(legacyRois?.official) ?? normalizeBasicClockRoi(legacyRois?.commentary)
 
+  const preferAdaptive = boolean(stored.preferAdaptive, defaults.preferAdaptive)
+  const youtubeDefaultQuality: YouTubeDefaultQuality = stored.youtubeDefaultQuality === '1080p'
+    || stored.youtubeDefaultQuality === '1440p'
+    || stored.youtubeDefaultQuality === 'highest'
+    ? stored.youtubeDefaultQuality
+    : preferAdaptive ? defaults.youtubeDefaultQuality : '1080p'
+
   return {
     volume: {
       official: clamp(stored.volume?.official, 0, 1, defaults.volume.official),
@@ -214,7 +226,8 @@ export function mergeSettings(raw: unknown): AppSettings {
     detectWindowSeconds: stored.detectWindowSeconds === 2 ? 2 : 3,
     seekThresholdSeconds: clamp(stored.seekThresholdSeconds, 0.2, 2, 2),
     sidebarVisible: boolean(stored.sidebarVisible, defaults.sidebarVisible),
-    preferAdaptive: boolean(stored.preferAdaptive, defaults.preferAdaptive),
+    preferAdaptive,
+    youtubeDefaultQuality,
     cameraUpscale: stored.cameraUpscale === 'off' || stored.cameraUpscale === 'performance' || stored.cameraUpscale === 'quality'
       ? stored.cameraUpscale : defaults.cameraUpscale,
     douyuWrites: boolean(stored.douyuWrites, defaults.douyuWrites),
@@ -243,6 +256,15 @@ export function saveSettings(settings: AppSettings, storage?: SettingsStorage): 
   } catch {
     // A full or blocked quota must not interrupt playback.
   }
+}
+
+/** Map the user's YouTube default quality preference to resolver parameters. */
+export function youtubeResolveQuality(
+  settings: Pick<AppSettings, 'youtubeDefaultQuality' | 'preferAdaptive'>,
+): { quality?: string; preferAdaptive?: boolean } {
+  if (settings.youtubeDefaultQuality === '1080p') return {}
+  if (settings.youtubeDefaultQuality === 'highest') return { preferAdaptive: true }
+  return { quality: '1440p', preferAdaptive: true }
 }
 
 function safeLocalStorage(): SettingsStorage | null {

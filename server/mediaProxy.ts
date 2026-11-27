@@ -13,6 +13,11 @@ const MAX_PLAYLIST_BYTES = 4 * 1_048_576
 const MAX_RESOURCES = 8192
 const TTL_MS = 10 * 60_000
 const MAX_UPSTREAM_RETRIES = 2
+const PREFETCH_SEGMENT_COUNT = 3
+const PREFETCH_MAX_SEGMENT_BYTES = 16 * 1_048_576
+const PREFETCH_MAX_TOTAL_BYTES = 64 * 1_048_576
+const PREFETCH_TTL_MS = 15_000
+const MAX_SEEN_SEGMENTS = 1024
 const TRANSIENT_UPSTREAM_STATUSES = new Set([500, 502, 503, 504])
 const TRANSIENT_SOCKET_CODES = new Set(['ECONNRESET', 'ECONNABORTED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED', 'ERR_SOCKET_CLOSED', 'ERR_STREAM_PREMATURE_CLOSE'])
 const RESPONSE_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']
@@ -32,15 +37,25 @@ export interface MediaDeps {
   onPlaylist?: (playlist: { url: string | URL; body: string }, network?: NetworkContext) => void
 }
 type Resource = { url: string; touched: number; headers?: Record<string,string>; network?: NetworkContext; access: MediaAccess; identity: string; children: Set<string>; readers: number }
+type PrefetchedPayload = { status: number; headers: Headers; bytes: Uint8Array<ArrayBuffer> }
+type PrefetchEntry = {
+  controller: AbortController
+  expires: number
+  bytes: number
+  promise: Promise<PrefetchedPayload | null>
+}
 
 export class MediaRegistry {
   private readonly resources = new Map<string, Resource>()
   private readonly ids = new Map<string, string>()
-  private readonly pool = new PinnedDispatcherPool({ maxEntries: 16, connections: 4 })
+  private readonly pool = new PinnedDispatcherPool({ maxEntries: 16, connections: 6, allowH2: true })
   private readonly requests = new Set<AbortController>()
   private readonly roots = new Set<string>()
   private readonly pendingChildren = new Set<string>()
   private readonly owners = new Map<AbortSignal, { ids: Set<string>; abort: () => void }>()
+  private readonly prefetched = new Map<string, PrefetchEntry>()
+  private readonly prefetchedSeen = new Set<string>()
+  private prefetchedBytes = 0
   private closed = false
   constructor(private readonly deps: MediaDeps) {
     if (deps.maxResources !== undefined && (!Number.isSafeInteger(deps.maxResources) || deps.maxResources < 1)) throw new Error('Invalid media memory capacity')
@@ -112,6 +127,8 @@ export class MediaRegistry {
   }
   clear(): void {
     for (const [signal, owner] of this.owners) signal.removeEventListener('abort', owner.abort)
+    for (const id of [...this.prefetched.keys()]) this.dropPrefetch(id)
+    this.prefetchedSeen.clear()
     this.owners.clear(); this.roots.clear(); this.pendingChildren.clear(); this.resources.clear(); this.ids.clear()
   }
 
@@ -158,7 +175,21 @@ export class MediaRegistry {
     }
     const notifyBytes = (bytes: number) => this.deps.onBytes?.(bytes, resource.network ?? this.deps.network)
     try {
-      const headers: Record<string, string> = { 'user-agent': 'StreamSyncer/0.1 (+desktop)', 'accept-encoding': 'identity' }
+      const resourceId = match![1]!
+      if (request.method === 'GET' && !request.headers.get('range') && !request.headers.get('if-none-match')) {
+        const cached = await this.consumePrefetch(resourceId, controller.signal)
+        if (cached) {
+          cleanup()
+          try { notifyBytes(cached.bytes.byteLength) } catch { /* Metrics cannot interrupt media delivery. */ }
+          return new Response(cached.bytes, { status: cached.status, headers: cached.headers })
+        }
+      }
+      const knownPlaylist = request.method === 'GET' && shouldRewrite(resource.url, null)
+      const headers: Record<string, string> = {
+        'user-agent': 'StreamSyncer/0.1 (+desktop)',
+        // Allow gzip/br compression for HLS playlists while keeping binary segments uncompressed for byte ranges.
+        'accept-encoding': knownPlaylist ? 'gzip, deflate, br' : 'identity',
+      }
       for (const name of ['range', 'accept', 'if-none-match']) {
         const value = request.headers.get(name)
         if (value) headers[name] = value
@@ -175,7 +206,7 @@ export class MediaRegistry {
       }
       // FFmpeg probes HTTP inputs with Range. Playlists need a complete body so
       // every nested URL can be replaced before reaching the local consumer.
-      if (request.method === 'GET' && shouldRewrite(resource.url, null)) delete headers.range
+      if (knownPlaylist) delete headers.range
       const connectionScope = JSON.stringify([this.contextId(resource.network ?? this.deps.network),
         createHash('sha256').update(JSON.stringify(Object.entries(resource.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest('hex')])
       const fetchResource = (usePool: boolean) => safeFetch(resource.url, mediaRequestPolicy(this.deps.config), {
@@ -243,6 +274,7 @@ export class MediaRegistry {
         if (shouldRewrite(result.finalUrl, type, body)) {
           try { this.deps.onPlaylist?.({ url: result.finalUrl, body }, resource.network ?? this.deps.network) } catch { /* Diagnostics cannot interrupt media delivery. */ }
           const nextChildren = new Set<string>()
+          const segmentIds: string[] = []
           let rewritten: string
           try {
             rewritten = rewritePlaylist(body, { baseUrl: result.finalUrl, register: raw => {
@@ -252,10 +284,14 @@ export class MediaRegistry {
               const capability = this.registerResource(raw, childHeaders, resource.network, mediaChild(resource.access))
               const id = capability.slice(capability.lastIndexOf('/') + 1)
               nextChildren.add(id); this.pendingChildren.add(id)
+              if (!shouldRewrite(raw, null)) segmentIds.push(id)
               return capability
             } })
             resource.children = nextChildren
           } finally { for (const id of nextChildren) this.pendingChildren.delete(id) }
+          if (this.deps.publicOrigin && /^#EXTINF:/m.test(body) && !/^#EXT-X-ENDLIST/m.test(body)) {
+            this.prefetchLiveSegments(segmentIds)
+          }
           outgoing.set('content-type', 'application/vnd.apple.mpegurl; charset=utf-8')
           outgoing.set('content-length', String(Buffer.byteLength(rewritten)))
           outgoing.delete('content-range')
@@ -301,6 +337,8 @@ export class MediaRegistry {
   }
   private now(): number { return this.deps.now?.() ?? Date.now() }
   private remove(id: string): void {
+    this.dropPrefetch(id)
+    this.prefetchedSeen.delete(id)
     const resource = this.resources.get(id)
     if (resource) this.ids.delete(resource.identity)
     this.resources.delete(id)
@@ -309,8 +347,131 @@ export class MediaRegistry {
     if (resource?.network?.signal) this.owners.get(resource.network.signal)?.ids.delete(id)
   }
   private prune(now: number): void {
+    this.prunePrefetch(now)
     const protectedIds = this.protectedResources()
     for (const [id, resource] of this.resources) if (!protectedIds.has(id) && now - resource.touched > TTL_MS) this.remove(id)
+  }
+  private dropPrefetch(id: string): void {
+    const entry = this.prefetched.get(id)
+    if (!entry) return
+    this.prefetched.delete(id)
+    this.prefetchedBytes = Math.max(0, this.prefetchedBytes - entry.bytes)
+    entry.controller.abort()
+  }
+  private prunePrefetch(now: number): void {
+    for (const [id, entry] of this.prefetched) {
+      if (entry.expires <= now) this.dropPrefetch(id)
+    }
+    while (this.prefetchedBytes > PREFETCH_MAX_TOTAL_BYTES && this.prefetched.size > 0) {
+      const oldest = this.prefetched.keys().next().value!
+      this.dropPrefetch(oldest)
+    }
+  }
+  private async consumePrefetch(id: string, signal: AbortSignal): Promise<PrefetchedPayload | null> {
+    this.prunePrefetch(this.now())
+    const entry = this.prefetched.get(id)
+    if (!entry) return null
+    this.prefetched.delete(id)
+    this.prefetchedBytes = Math.max(0, this.prefetchedBytes - entry.bytes)
+    try {
+      const result = await new Promise<PrefetchedPayload | null>((resolve) => {
+        if (signal.aborted) { resolve(null); return }
+        const onAbort = () => resolve(null)
+        signal.addEventListener('abort', onAbort, { once: true })
+        void entry.promise.then(
+          value => { signal.removeEventListener('abort', onAbort); resolve(value) },
+          () => { signal.removeEventListener('abort', onAbort); resolve(null) },
+        )
+      })
+      return signal.aborted ? null : result
+    } catch { return null }
+  }
+  private prefetchLiveSegments(ids: string[]): void {
+    if (this.closed || !ids.length) return
+    const now = this.now()
+    this.prunePrefetch(now)
+    const candidates = ids.slice(-PREFETCH_SEGMENT_COUNT)
+    for (const id of candidates) {
+      if (this.prefetchedSeen.has(id) || this.prefetched.has(id)) continue
+      const resource = this.resources.get(id)
+      if (!resource || resource.network?.signal?.aborted) continue
+      if (this.prefetchedSeen.size >= MAX_SEEN_SEGMENTS) {
+        this.prefetchedSeen.delete(this.prefetchedSeen.values().next().value!)
+      }
+      this.prefetchedSeen.add(id)
+      const controller = new AbortController()
+      const network = resource.network ?? this.deps.network
+      const configuredTimeout = network?.media?.requestTimeoutMs
+      const timeoutMs = configuredTimeout === undefined ? this.deps.config.requestTimeoutMs
+        : configuredTimeout > 0 ? configuredTimeout : 20_000
+      const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined
+      const onNetworkAbort = () => controller.abort()
+      network?.signal?.addEventListener('abort', onNetworkAbort, { once: true })
+      const entry: PrefetchEntry = { controller, expires: now + PREFETCH_TTL_MS, bytes: 0, promise: Promise.resolve(null) }
+      const cleanupPrefetch = () => {
+        clearTimeout(timer)
+        network?.signal?.removeEventListener('abort', onNetworkAbort)
+      }
+      entry.promise = (async (): Promise<PrefetchedPayload | null> => {
+        let upstream: Response | undefined
+        try {
+          const headers: Record<string, string> = { 'user-agent': 'StreamSyncer/0.1 (+desktop)', 'accept-encoding': 'identity' }
+          const host = new URL(resource.url).hostname
+          if (/(^|\.)(douyucdn[23]?\.cn|dyscdn\.com|douyu\.com)$/i.test(host)) headers.referer = 'https://www.douyu.com/'
+          if (/(^|\.)(bilivideo\.com|hdslb\.com)$/i.test(host)) headers.referer = 'https://live.bilibili.com/'
+          if (/(^|\.)huya\.com$/i.test(host)) headers.referer = 'https://www.huya.com/'
+          for (const [name, value] of Object.entries(resource.headers ?? {})) {
+            for (const existing of Object.keys(headers)) {
+              if (existing.toLowerCase() === name.toLowerCase()) delete headers[existing]
+            }
+            headers[name] = value
+          }
+          const connectionScope = JSON.stringify([this.contextId(network),
+            createHash('sha256').update(JSON.stringify(Object.entries(resource.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest('hex')])
+          const fetched = await safeFetch(resource.url, mediaRequestPolicy(this.deps.config), {
+            method: 'GET', headers, signal: controller.signal, resolve: this.deps.resolve, fetchImpl: this.deps.fetchImpl,
+            network, mediaAccess: resource.access, dispatcherPool: this.pool, connectionScope,
+          })
+          upstream = fetched.response
+          if (!upstream.ok || !upstream.body) {
+            await upstream.body?.cancel().catch(() => {})
+            return null
+          }
+          const declared = Number(upstream.headers.get('content-length'))
+          if (Number.isFinite(declared) && declared > PREFETCH_MAX_SEGMENT_BYTES) {
+            await upstream.body.cancel().catch(() => {})
+            return null
+          }
+          const sniffed = await sniffPlaylist(upstream.body)
+          if (sniffed.playlist) {
+            await sniffed.body.cancel().catch(() => {})
+            return null
+          }
+          const bytes = await readBounded(sniffed.body, PREFETCH_MAX_SEGMENT_BYTES)
+          if (controller.signal.aborted || this.closed) return null
+          const outgoing = new Headers({ 'cache-control': 'no-store' })
+          for (const name of RESPONSE_HEADERS) {
+            const value = upstream.headers.get(name)
+            if (value !== null) outgoing.set(name, value)
+          }
+          outgoing.set('content-length', String(bytes.byteLength))
+          if (this.prefetched.get(id) === entry) {
+            entry.bytes = bytes.byteLength
+            this.prefetchedBytes += bytes.byteLength
+            this.prunePrefetch(this.now())
+          }
+          return { status: upstream.status, headers: outgoing, bytes }
+        } catch {
+          await upstream?.body?.cancel().catch(() => {})
+          if (this.prefetched.get(id) === entry) this.dropPrefetch(id)
+          return null
+        } finally {
+          cleanupPrefetch()
+        }
+      })()
+      void entry.promise.catch(() => {})
+      this.prefetched.set(id, entry)
+    }
   }
   private protectedResources(): Set<string> {
     const retained = new Set<string>()
