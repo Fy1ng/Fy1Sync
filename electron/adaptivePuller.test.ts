@@ -573,4 +573,78 @@ describe('adaptive sq acquisition', () => {
     h.controller.abort()
     await h.pending
   })
+
+  it('hedges a slow live segment with a parallel backup request and cancels the slow one', async () => {
+    vi.useFakeTimers()
+    let slowAborted = false
+    let video99Calls = 0
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const sq = Number(url.searchParams.get('sq'))
+      const isVideo = url.searchParams.get('token') === 'PRIVATE_VIDEO'
+      if (sq === 0) return response('probe', '100')
+      if (isVideo && sq === 99) {
+        video99Calls++
+        if (video99Calls === 1) {
+          return await new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              slowAborted = true
+              reject(new DOMException('aborted', 'AbortError'))
+            }, { once: true })
+          })
+        }
+        return response('v99-hedged', '100')
+      }
+      return response(`${isVideo ? 'v' : 'a'}${sq}`, '100')
+    }) as typeof fetch
+    const h = harness(fetcher, { requestTimeoutMs: 5000, headersTimeoutMs: 4000, hedgeDelayMs: 200 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(video99Calls).toBe(2)
+    expect(slowAborted).toBe(true)
+    expect(h.video).toEqual(['v98', 'v99-hedged', 'v100'])
+    h.controller.abort()
+    await h.pending
+  })
+
+  it('proactively refreshes signed URLs before expire without interrupting the stream', async () => {
+    vi.useFakeTimers()
+    const baseNow = 1_700_000_000_000
+    vi.setSystemTime(baseNow)
+    const expiringSoon = Math.floor((baseNow + 5 * 60_000) / 1000)
+    const freshExpire = Math.floor((baseNow + 6 * 3600_000) / 1000)
+    const expiringSource: AdaptiveSource = {
+      videoUrl: `https://r1.example.googlevideo.com/videoplayback?token=OLD_VIDEO&expire=${expiringSoon}&dur=2.000`,
+      audioUrl: `https://r1.example.googlevideo.com/videoplayback?token=OLD_AUDIO&expire=${expiringSoon}&dur=2.000`,
+      videoContainer: 'webm', height: 1440,
+    }
+    const refreshSource = vi.fn(async (): Promise<AdaptiveSource> => ({
+      videoUrl: `https://r2.example.googlevideo.com/videoplayback?token=NEW_VIDEO&expire=${freshExpire}&dur=2.000`,
+      audioUrl: `https://r2.example.googlevideo.com/videoplayback?token=NEW_AUDIO&expire=${freshExpire}&dur=2.000`,
+      videoContainer: 'webm', height: 1440,
+    }))
+    const seenTokens: string[] = []
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      const sq = Number(url.searchParams.get('sq'))
+      const token = url.searchParams.get('token') ?? ''
+      seenTokens.push(`${token}:${sq}`)
+      const elapsed = Date.now() - baseNow
+      const head = 100 + Math.floor(elapsed / 2000)
+      return response(`${token}:${sq}`, String(head))
+    }) as typeof fetch
+    const controller = new AbortController()
+    const video: string[] = [], audio: string[] = []
+    const pending = pullAdaptive(expiringSource, {
+      video: sink(video), audio: sink(audio), signal: controller.signal,
+      resolve: publicDns, fetchImpl: fetcher, refreshSource,
+    }).catch((error: unknown) => error)
+    await flush()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(refreshSource).toHaveBeenCalledOnce()
+    expect(seenTokens.some(entry => entry.startsWith('NEW_VIDEO:'))).toBe(true)
+    expect(seenTokens.some(entry => entry.startsWith('NEW_AUDIO:'))).toBe(true)
+    controller.abort()
+    await pending
+  })
 })

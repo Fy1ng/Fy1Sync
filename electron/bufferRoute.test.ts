@@ -46,6 +46,13 @@ describe('active buffer capability route', () => {
     const cached = await f.route.handle(new Request(f.url))
     expect(cached.status).toBe(200)
     expect(await cached.text()).toBe('#EXTM3U\n#EXTINF:2,\nsegment_0_000000000.ts\n')
+    f.route.setSegment('official', 'generation-1', 'segment_0_000000000.ts', new TextEncoder().encode('CACHED_BYTES'))
+    const hot = await f.route.handle(new Request(f.segment, { headers: { range: 'bytes=0-5' } }))
+    expect(hot.status).toBe(206)
+    expect(await hot.text()).toBe('CACHED')
+    f.route.evictSegment('official', 'generation-1', 'segment_0_000000000.ts')
+    const disk = await f.route.handle(new Request(f.segment))
+    expect(await disk.text()).toBe('0123456789')
   })
   it.each(['bytes=2-5', 'bytes=2-', 'bytes=-3', 'bytes=0-999'])('serves single byte ranges: %s', async range => {
     const f = await fixture(), response = await f.route.handle(new Request(f.segment, { headers: { range } }))

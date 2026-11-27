@@ -23,7 +23,22 @@ export interface BufferCommercialBreak {
   /** Contiguous [startSeconds, endSeconds] offsets within the published buffer window. */
   ranges: [number, number][]
 }
-export interface BufferInput { url: string; audioUrl?: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; readCommercialBreak?: () => boolean; gatewayHls?: boolean; fmp4?: boolean }
+export interface BufferInput {
+  url: string
+  audioUrl?: string
+  headers?: Record<string, string>
+  realtime?: boolean
+  adaptive?: AdaptiveSource
+  refreshAdaptive?: () => Promise<AdaptiveSource | undefined>
+  qualityHeight?: number
+  fallbackFromHeight?: number
+  proxyUrl?: string
+  network?: NetworkContext
+  readFailure?: () => StreamFailure | undefined
+  readCommercialBreak?: () => boolean
+  gatewayHls?: boolean
+  fmp4?: boolean
+}
 export interface BufferNotice { code: 'youtube-adaptive-fallback'; fromHeight: number; toHeight: number }
 export type BufferPhase = 'starting' | 'buffering' | 'ready' | 'stalled' | 'reconnecting' | 'failed' | 'stopped'
 export interface BufferState { role: Role; state: BufferPhase; seconds: number; attempt?: number; retryInMs?: number; reason?: string; notice?: BufferNotice; commercialBreak?: BufferCommercialBreak; failure?: StreamFailure; retriesRemaining?: number; hasVideo?: boolean; completeSegments?: number }
@@ -328,7 +343,10 @@ export class BufferManager {
         // Pending OS writes can report EPIPE after cancellation has released the puller.
         video.on('error', () => {})
         audio.on('error', () => {})
-        run.pulling = (this.options.pullAdaptive ?? pullAdaptive)(input.adaptive, { video, audio, signal: run.abort!.signal, network: input.network })
+        run.pulling = (this.options.pullAdaptive ?? pullAdaptive)(input.adaptive, {
+          video, audio, signal: run.abort!.signal, network: input.network,
+          ...(input.refreshAdaptive ? { refreshSource: input.refreshAdaptive } : {}),
+        })
           .then(() => this.finish(session, run, 'adaptive-ended'), error => {
             run.failure = classifyNetworkFailure(error)
             return this.finish(session, run, 'adaptive-pull-failed')
@@ -408,8 +426,25 @@ export class BufferManager {
       if (!segment.uri.startsWith(`segment_${run.id}_`)) throw new Error('unexpected segment generation')
       if (segment.init && segment.init !== `init_${run.id}.mp4`) throw new Error('unexpected init generation')
       // A published EXTINF must refer to a real, nonempty file closed by temp_file.
-      const sealed = await stat(path.join(session.directory, segment.uri))
+      const sealedPath = path.join(session.directory, segment.uri)
+      const sealed = await stat(sealedPath)
       if (!sealed.isFile() || sealed.size === 0) throw new Error('empty or missing sealed segment')
+      // Warm the hot-segment memory cache before publishing the playlist so the handle is
+      // closed before later retention deletes and immediate player reads hit memory.
+      if (sealed.size <= 16 * 1_048_576) {
+        try {
+          const data = await readFile(sealedPath)
+          if (this.current(session, run)) this.route.setSegment(session.role, session.generation, segment.uri, new Uint8Array(data))
+        } catch { /* Fall back to disk reads on cache read failure. */ }
+      }
+      if (segment.init && run.lastSequence < 0) {
+        try {
+          const data = await readFile(path.join(session.directory, segment.init))
+          if (this.current(session, run) && data.byteLength <= 16 * 1_048_576) {
+            this.route.setSegment(session.role, session.generation, segment.init, new Uint8Array(data))
+          }
+        } catch { /* Fall back to disk reads on cache read failure. */ }
+      }
       session.segments.push({ ...segment, sequence: session.nextSequence++, discontinuity: segment.discontinuity || (run.lastSequence < 0 && session.nextSequence > 1), ...(inCommercialBreak ? { commercialBreak: true } : {}) })
       run.lastSequence = sourceSequence
       added = true
@@ -441,6 +476,7 @@ export class BufferManager {
     }
     const discarded = session.discarded.filter(item => item.deleteAfter <= this.clock.now())
     session.discarded = session.discarded.filter(item => item.deleteAfter > this.clock.now())
+    for (const item of discarded) this.route.evictSegment(session.role, session.generation, item.uri)
     await Promise.all(discarded.map(item => rm(path.join(session.directory, item.uri), { force: true })))
   }
   private async publish(session: RoleSession): Promise<void> {

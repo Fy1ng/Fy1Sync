@@ -223,19 +223,26 @@ describe('main acquisition boundary', () => {
   })
 
   it('falls back to HLS when a previously advertised adaptive id disappears after token provider failure', async () => {
-    const h = harness()
-    const metadata = await h.runYtDlp()
-    metadata.formats.push(
-      { format_id: '308', protocol: 'https', height: 1440, fps: 60, vcodec: 'vp9', acodec: 'none', ext: 'webm', url: 'https://rr1.googlevideo.com/videoplayback?itag=308' } as typeof metadata.formats[number],
-      { format_id: '140', protocol: 'https', height: 0, fps: 0, vcodec: 'none', acodec: 'mp4a.40.2', ext: 'm4a', url: 'https://rr1.googlevideo.com/videoplayback?itag=140' } as typeof metadata.formats[number],
-    )
-    h.runYtDlp.mockResolvedValueOnce(metadata)
-    await h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official')
-    const switched = await h.acquisition.switchQuality('official', '308')
-    expect(switched).toMatchObject({ ok: true, stream: { quality: '301' } })
-    expect(h.inputs.at(-1)).toMatchObject({ fallbackFromHeight: 1440, qualityHeight: 1080 })
-    expect(h.inputs.at(-1)?.adaptive).toBeUndefined()
-    expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false, expect.any(Object))
+    vi.useFakeTimers()
+    try {
+      const h = harness()
+      const metadata = await h.runYtDlp()
+      metadata.formats.push(
+        { format_id: '308', protocol: 'https', height: 1440, fps: 60, vcodec: 'vp9', acodec: 'none', ext: 'webm', url: 'https://rr1.googlevideo.com/videoplayback?itag=308' } as typeof metadata.formats[number],
+        { format_id: '140', protocol: 'https', height: 0, fps: 0, vcodec: 'none', acodec: 'mp4a.40.2', ext: 'm4a', url: 'https://rr1.googlevideo.com/videoplayback?itag=140' } as typeof metadata.formats[number],
+      )
+      h.runYtDlp.mockResolvedValueOnce(metadata)
+      await h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official')
+      // Expire the short quality-switch cache so switching re-runs extraction and observes provider loss.
+      vi.advanceTimersByTime(11 * 60_000)
+      const switched = await h.acquisition.switchQuality('official', '308')
+      expect(switched).toMatchObject({ ok: true, stream: { quality: '301' } })
+      expect(h.inputs.at(-1)).toMatchObject({ fallbackFromHeight: 1440, qualityHeight: 1080 })
+      expect(h.inputs.at(-1)?.adaptive).toBeUndefined()
+      expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false, expect.any(Object))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('returns only a local playlist and quality metadata, never the signed input', async () => {
@@ -281,15 +288,29 @@ describe('main acquisition boundary', () => {
     h.acquisition.dispose()
   })
 
-  it('resolves again on reconnect and on each role quality change', async () => {
+  it('reuses fresh YouTube metadata on quality switch while re-resolving on reconnect, restart and playback fallback', async () => {
     const h = harness()
     await h.acquisition.resolve('https://www.youtube.com/watch?v=abcdefghijk', 'youtube', 'official')
+    expect(h.runYtDlp).toHaveBeenCalledTimes(1)
+    // Switching quality within TTL reuses the cached format table without re-running yt-dlp.
+    const fastSwitch = await h.acquisition.switchQuality('official', '300')
+    expect(fastSwitch).toMatchObject({ ok: true, stream: { quality: '300' } })
+    expect(h.inputs.at(-1)?.url).toContain('/low.m3u8')
+    expect(h.runYtDlp).toHaveBeenCalledTimes(1)
+    // Reconnect and explicit restart always re-run yt-dlp.
     await h.reconnect()
     expect(h.runYtDlp).toHaveBeenCalledTimes(2)
-    const result = await h.acquisition.switchQuality('official', '300')
-    expect(result).toMatchObject({ ok: true, stream: { quality: '300' } })
-    expect(h.inputs.at(-1)?.url).toContain('/low.m3u8')
+    await h.acquisition.restart('official')
     expect(h.runYtDlp).toHaveBeenCalledTimes(3)
+    // If cached URLs fail startup (e.g. IP-bound 403 after proxy switch), transparently evict cache and re-run yt-dlp.
+    h.buffer.start.mockImplementationOnce(async (role, prepare) => {
+      await prepare()
+      h.emit({ role, state: 'failed', seconds: 0, failure: { stage: 'http', code: 'http-403', status: 403, message: 'HTTP 403' } })
+      return { url: 'app://app/buffer/failed/index.m3u8' }
+    })
+    const recovered = await h.acquisition.switchQuality('official', '301')
+    expect(recovered).toMatchObject({ ok: true, stream: { quality: '301' } })
+    expect(h.runYtDlp).toHaveBeenCalledTimes(4)
   })
 
   it.each(['https://user:password@8.8.8.8/x.flv'])('accepts user-provided media authentication without exposing it: %s', async (input) => {

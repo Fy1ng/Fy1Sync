@@ -9,10 +9,14 @@ interface ActiveRole {
   generation: string
   directory: string
   playlist?: Uint8Array<ArrayBuffer>
+  segments: Map<string, Uint8Array<ArrayBuffer>>
+  segmentBytes: number
   verified?: Promise<{ sessionRoot: string; directory: string } | null>
 }
 const TOKEN = /^[a-zA-Z0-9_-]{1,128}$/
 const FILE = /^(?:index\.m3u8|segment_\d+_\d{9}\.(?:ts|m4s)|init_\d+\.mp4)$/
+const MAX_CACHED_SEGMENT_BYTES = 16 * 1_048_576
+const MAX_ROLE_SEGMENT_CACHE_BYTES = 32 * 1_048_576
 const utf8Encoder = new TextEncoder()
 
 /** A capability route for published files in the current session only. */
@@ -23,13 +27,45 @@ export class BufferRoute {
   }
   activate(role: BufferRole, generation: string, directory: string): string {
     if (!isStreamId(role) || !TOKEN.test(generation) || path.resolve(directory) !== path.resolve(this.sessionRoot, role)) throw new Error('invalid buffer directory')
-    this.roles.set(role, { generation, directory: path.resolve(directory) })
+    this.roles.set(role, { generation, directory: path.resolve(directory), segments: new Map(), segmentBytes: 0 })
     return `app://app/buffer/${this.sessionId}/${role}/${generation}/index.m3u8`
   }
   setPlaylist(role: BufferRole, generation: string, content: string): void {
     const active = this.roles.get(role)
     if (!active || active.generation !== generation) return
     active.playlist = utf8Encoder.encode(content)
+  }
+  setSegment(role: BufferRole, generation: string, filename: string, bytes: Uint8Array<ArrayBuffer>): void {
+    const active = this.roles.get(role)
+    if (!active || active.generation !== generation || !FILE.test(filename) || filename === 'index.m3u8') return
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_CACHED_SEGMENT_BYTES) return
+    const previous = active.segments.get(filename)
+    if (previous) {
+      active.segmentBytes -= previous.byteLength
+      active.segments.delete(filename)
+    }
+    active.segments.set(filename, bytes)
+    active.segmentBytes += bytes.byteLength
+    while (active.segmentBytes > MAX_ROLE_SEGMENT_CACHE_BYTES && active.segments.size > 1) {
+      const oldest = active.segments.keys().next().value!
+      // Keep init segments pinned ahead of older media chunks when evicting.
+      let victim = oldest
+      if (victim.startsWith('init_')) {
+        const candidate = [...active.segments.keys()].find(name => !name.startsWith('init_'))
+        if (candidate) victim = candidate
+      }
+      const removed = active.segments.get(victim)!
+      active.segments.delete(victim)
+      active.segmentBytes = Math.max(0, active.segmentBytes - removed.byteLength)
+    }
+  }
+  evictSegment(role: BufferRole, generation: string, filename: string): void {
+    const active = this.roles.get(role)
+    if (!active || active.generation !== generation) return
+    const existing = active.segments.get(filename)
+    if (!existing) return
+    active.segments.delete(filename)
+    active.segmentBytes = Math.max(0, active.segmentBytes - existing.byteLength)
   }
   deactivate(role: BufferRole): void { this.roles.delete(role) }
   clear(): void { this.roles.clear() }
@@ -55,15 +91,16 @@ export class BufferRoute {
     if (!active || parts[4] !== active.generation) return new Response(null, { status: 404 })
     const candidate = path.resolve(active.directory, parts[5]!)
     if (!inside(active.directory, candidate)) return new Response(null, { status: 403 })
-    // Serve published playlists directly from memory after directory verification to avoid
-    // disk contention and Windows file-lock retries with concurrent FFmpeg writes.
-    if (parts[5] === 'index.m3u8' && active.playlist !== undefined) {
+    // Serve published playlists and hot sealed segments directly from memory after
+    // directory verification to avoid Windows file-lock retries and AV scan stalls.
+    const cachedBytes = parts[5] === 'index.m3u8' ? active.playlist : active.segments.get(parts[5]!)
+    if (cachedBytes !== undefined) {
       const base = await this.verifyBase(active)
       if (!base) return new Response(null, { status: 403 })
-      if (this.roles.get(role) !== active || active.playlist === undefined) return new Response(null, { status: 404 })
-      const bytes = active.playlist
+      if (this.roles.get(role) !== active) return new Response(null, { status: 404 })
+      const bytes = cachedBytes
       const headers = new Headers({
-        'content-type': 'application/vnd.apple.mpegurl',
+        'content-type': parts[5] === 'index.m3u8' ? 'application/vnd.apple.mpegurl' : parts[5]!.endsWith('.ts') ? 'video/mp2t' : 'video/mp4',
         'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'accept-ranges': 'bytes',
       })
       const range = parseRange(request.headers.get('range'), bytes.byteLength)

@@ -33,10 +33,15 @@ export interface AdaptivePullOptions {
   now?: () => number
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>
   requestTimeoutMs?: number
+  headersTimeoutMs?: number
   bodyIdleTimeoutMs?: number
+  /** Delay before launching a parallel backup connection for a slow live segment (0 disables). */
+  hedgeDelayMs?: number
   maxSegmentBytes?: number
   /** Bounded lookahead segment downloads per track when behind the advertised head. */
   prefetch?: number
+  /** Optional proactive URL refresh before signed googlevideo URLs expire. */
+  refreshSource?: () => Promise<AdaptiveSource | null | undefined>
   progress?: (event: { track: 'probe' | 'video' | 'audio'; phase: 'received' | 'written'; sq: number; head: number; bytes: number }) => void
 }
 
@@ -52,13 +57,26 @@ const MAX_PENDING_POLL_MS = 500
 const MIN_PENDING_WAIT_MS = 12_000
 const MAX_PENDING_POLLS = 60
 const DEFAULT_SEGMENT_TIMEOUT_MS = 15_000
+const DEFAULT_HEADERS_TIMEOUT_MS = 5_000
 const DEFAULT_BODY_IDLE_TIMEOUT_MS = 6_000
+const DEFAULT_HEDGE_DELAY_MS = 3_500
 const DEFAULT_PREFETCH_AHEAD = 2
 const MAX_PREFETCH_AHEAD = 4
 const FIRST_RETRY_BACKOFF_MS = 150
+const EXPIRE_REFRESH_LEAD_MS = 10 * 60_000
+const EXPIRE_REFRESH_COOLDOWN_MS = 2 * 60_000
 const policy: ProxyConfig = {
   enabled: true, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false,
   maxRedirects: 3, requestTimeoutMs: DEFAULT_SEGMENT_TIMEOUT_MS,
+}
+
+function parseUrlExpireMs(raw: string): number | undefined {
+  let url: URL
+  try { url = new URL(raw) } catch { return undefined }
+  const param = url.searchParams.get('expire') ?? /\/expire\/(\d{9,12})(?:\/|$)/i.exec(url.pathname)?.[1] ?? null
+  if (param === null || !/^\d{9,12}$/.test(param)) return undefined
+  const ms = Number(param) * 1000
+  return Number.isSafeInteger(ms) && ms > 0 ? ms : undefined
 }
 
 function parseUrlDurationMs(raw: string): number | undefined {
@@ -246,17 +264,23 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
   const configuredRetries = options.network?.media?.reconnectAttempts
   const maxAttempts = configuredRetries && configuredRetries > 0 ? Math.min(configuredRetries, 6) : MAX_ATTEMPTS
   const maxBytes = options.maxSegmentBytes ?? 32 * 1024 * 1024
+  const headersTimeoutMs = options.headersTimeoutMs
+    ?? (timeoutMs > DEFAULT_HEADERS_TIMEOUT_MS ? DEFAULT_HEADERS_TIMEOUT_MS : 0)
   const bodyIdleTimeoutMs = options.bodyIdleTimeoutMs
     ?? (timeoutMs > DEFAULT_BODY_IDLE_TIMEOUT_MS ? DEFAULT_BODY_IDLE_TIMEOUT_MS : 0)
+  const hedgeDelayMs = options.hedgeDelayMs
+    ?? (timeoutMs >= DEFAULT_BODY_IDLE_TIMEOUT_MS ? DEFAULT_HEDGE_DELAY_MS : 0)
   const prefetchCount = options.prefetch === undefined
     ? DEFAULT_PREFETCH_AHEAD
     : Math.max(0, Math.min(MAX_PREFETCH_AHEAD, Math.floor(options.prefetch)))
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647
+    || !Number.isSafeInteger(headersTimeoutMs) || headersTimeoutMs < 0 || headersTimeoutMs > 2_147_483_647
     || !Number.isSafeInteger(bodyIdleTimeoutMs) || bodyIdleTimeoutMs < 0 || bodyIdleTimeoutMs > 2_147_483_647
+    || !Number.isSafeInteger(hedgeDelayMs) || hedgeDelayMs < 0 || hedgeDelayMs > 2_147_483_647
     || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024 * 1024) {
     throw new AdaptivePullError('adaptive-request-failed')
   }
-  const dispatcherPool = options.fetchImpl ? undefined : new PinnedDispatcherPool({ connections: 6, allowH2: true })
+  const dispatcherPool = options.fetchImpl ? undefined : new PinnedDispatcherPool({ connections: 8, allowH2: true })
   const controller = new AbortController()
   const signal = AbortSignal.any([controller.signal, options.signal, ...(options.network?.signal ? [options.network.signal] : [])])
   const now = options.now ?? Date.now
@@ -269,75 +293,178 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
     return doFetch(requireMediaUrl(input), init)
   }
 
+  let activeVideoUrl = source.videoUrl
+  let activeAudioUrl = source.audioUrl
+  let activeExpireMs = (() => {
+    const times = [parseUrlExpireMs(source.videoUrl), parseUrlExpireMs(source.audioUrl)].filter((v): v is number => v !== undefined)
+    return times.length ? Math.min(...times) : undefined
+  })()
+  let refreshInflight: Promise<void> | undefined
+  let lastRefreshAttemptAt = 0
+  const maybeRefreshSource = (): void => {
+    if (!options.refreshSource || activeExpireMs === undefined || refreshInflight || signal.aborted) return
+    const current = now()
+    if (activeExpireMs - current > EXPIRE_REFRESH_LEAD_MS) return
+    if (lastRefreshAttemptAt > 0 && current - lastRefreshAttemptAt < EXPIRE_REFRESH_COOLDOWN_MS) return
+    lastRefreshAttemptAt = current
+    refreshInflight = Promise.resolve().then(() => options.refreshSource!()).then(refreshed => {
+      if (!refreshed || signal.aborted || refreshed.videoContainer !== source.videoContainer) return
+      requireMediaUrl(refreshed.videoUrl)
+      requireMediaUrl(refreshed.audioUrl)
+      activeVideoUrl = refreshed.videoUrl
+      activeAudioUrl = refreshed.audioUrl
+      const times = [parseUrlExpireMs(refreshed.videoUrl), parseUrlExpireMs(refreshed.audioUrl)].filter((v): v is number => v !== undefined)
+      activeExpireMs = times.length ? Math.min(...times) : undefined
+    }).catch(() => { /* Keep pulling with the current signed URLs until expiry forces reconnect. */ })
+      .finally(() => { refreshInflight = undefined })
+  }
+
   const estimator = createDurationEstimator(parseUrlDurationMs(source.videoUrl) ?? parseUrlDurationMs(source.audioUrl))
 
-  const segment = async (base: string, sq: number, probe = false): Promise<{ head: number; bytes: Buffer; observedAt: number }> => {
-    const url = requireMediaUrl(base)
-    url.searchParams.set('sq', String(sq))
+  type SegmentResult = { head: number; bytes: Buffer; observedAt: number }
+  type AttemptOutcome = { kind: 'ok'; result: SegmentResult } | { kind: 'pending'; delayMs: number }
+
+  const segment = async (getBase: () => string, sq: number, probe = false, allowHedge = false): Promise<SegmentResult> => {
     let attempt = 0
     let pendingStartedAt: number | undefined
     let pendingPolls = 0
     while (attempt < maxAttempts) {
       if (signal.aborted) throw abortError()
+      if (!probe) maybeRefreshSource()
+      const url = requireMediaUrl(getBase())
+      url.searchParams.set('sq', String(sq))
       const request = new AbortController()
       const requestSignal = AbortSignal.any([signal, request.signal])
       const timer = timeoutMs > 0 ? setTimeout(() => { request.abort() }, timeoutMs) : undefined
       let notPublishedDelayMs: number | undefined
       let pendingExhausted = false
-      try {
-        const operation = (async () => {
-          const startedAt = now()
-          const { response } = await safeFetch(url.toString(), policy, {
-            fetchImpl: checkedFetch, network: options.network, resolve: options.resolve, signal: requestSignal,
+      const runSingleAttempt = async (usePool: boolean, attemptSignal: AbortSignal): Promise<AttemptOutcome> => {
+        const startedAt = now()
+        const headersAbort = new AbortController()
+        const fetchSignal = headersTimeoutMs > 0 ? AbortSignal.any([attemptSignal, headersAbort.signal]) : attemptSignal
+        const headersTimer = headersTimeoutMs > 0 ? setTimeout(() => { headersAbort.abort() }, headersTimeoutMs) : undefined
+        let response: Response
+        try {
+          const fetched = await safeFetch(url.toString(), policy, {
+            fetchImpl: checkedFetch, network: options.network, resolve: options.resolve, signal: fetchSignal,
             headers: { Accept: '*/*' },
             // Share one per-session pool across video/audio tracks on the same googlevideo origin.
-            ...(dispatcherPool && attempt === 0 ? { dispatcherPool, connectionScope: 'adaptive' } : {}),
+            ...(dispatcherPool && usePool ? { dispatcherPool, connectionScope: 'adaptive' } : {}),
           })
-          const headersAt = now()
-          if (response.status === 403 || response.status === 410) {
-            void response.body?.cancel().catch(() => {})
-            throw new AdaptivePullError('adaptive-expired', response.status)
+          response = fetched.response
+        } finally {
+          if (headersTimer !== undefined) clearTimeout(headersTimer)
+        }
+        const headersAt = now()
+        if (response.status === 403 || response.status === 410) {
+          void response.body?.cancel().catch(() => {})
+          throw new AdaptivePullError('adaptive-expired', response.status)
+        }
+        const rawHead = response.headers.get('x-head-seqnum')
+        const head = Number(rawHead)
+        const validHead = rawHead !== null && /^\d+$/.test(rawHead) && Number.isSafeInteger(head)
+        const headTimeMs = parseHeadTimeMillis(response.headers)
+        if (validHead) estimator.observe(head, headersAt, headTimeMs)
+        // Discovery needs only headers, including when an old sq=0 was evicted.
+        // Cancel the unused historical body rather than downloading a full segment.
+        if (probe && (response.ok || response.status === 404) && validHead) {
+          void response.body?.cancel().catch(() => {})
+          return { kind: 'ok', result: { head, bytes: Buffer.alloc(0), observedAt: startedAt } }
+        }
+        // A 404 with sq > advertised head means the segment is not published yet.
+        // Poll briefly with a bounded budget instead of terminating ffmpeg immediately.
+        if (response.status === 404 && validHead && sq > head) {
+          void response.body?.cancel().catch(() => {})
+          pendingStartedAt ??= headersAt
+          const segmentMs = estimator.durationMs()
+          const maxPendingWaitMs = Math.max(MIN_PENDING_WAIT_MS, segmentMs * 3)
+          const pollMs = Math.min(MAX_PENDING_POLL_MS, Math.max(MIN_PENDING_POLL_MS, Math.round(segmentMs / 4)))
+          if (pendingPolls < MAX_PENDING_POLLS && headersAt - pendingStartedAt < maxPendingWaitMs) {
+            pendingPolls++
+            attempt = 0
+            return { kind: 'pending', delayMs: pollMs }
           }
-          const rawHead = response.headers.get('x-head-seqnum')
-          const head = Number(rawHead)
-          const validHead = rawHead !== null && /^\d+$/.test(rawHead) && Number.isSafeInteger(head)
-          const headTimeMs = parseHeadTimeMillis(response.headers)
-          if (validHead) estimator.observe(head, headersAt, headTimeMs)
-          // Discovery needs only headers, including when an old sq=0 was evicted.
-          // Cancel the unused historical body rather than downloading a full segment.
-          if (probe && (response.ok || response.status === 404) && validHead) {
-            void response.body?.cancel().catch(() => {})
-            return { head, bytes: Buffer.alloc(0), observedAt: startedAt }
+          pendingExhausted = true
+          throw new AdaptivePullError('adaptive-request-failed', 404)
+        }
+        if (!response.ok) {
+          void response.body?.cancel().catch(() => {})
+          throw new AdaptivePullError('adaptive-request-failed', response.status)
+        }
+        if (!validHead) {
+          void response.body?.cancel().catch(() => {})
+          throw new AdaptivePullError('adaptive-invalid-head')
+        }
+        return { kind: 'ok', result: { head, bytes: await readBounded(response, maxBytes, attemptSignal, bodyIdleTimeoutMs), observedAt: startedAt } }
+      }
+      const isTerminalError = (error: unknown): boolean => {
+        if (error instanceof AdaptivePullError) {
+          return error.code !== 'adaptive-request-failed' && error.code !== 'adaptive-aborted'
+        }
+        return Boolean(error && typeof error === 'object' && 'reason' in error)
+      }
+      const runWithOptionalHedge = (): Promise<AttemptOutcome> => {
+        if (probe || !allowHedge || attempt !== 0 || hedgeDelayMs <= 0) {
+          return runSingleAttempt(attempt === 0, requestSignal)
+        }
+        return new Promise<AttemptOutcome>((resolve, reject) => {
+          const primaryCtrl = new AbortController()
+          const backupCtrl = new AbortController()
+          let settled = false
+          let primaryDone = false
+          let backupStarted = false
+          let backupDone = false
+          let firstError: unknown
+          const finishResolve = (value: AttemptOutcome) => {
+            if (settled) return
+            settled = true
+            clearTimeout(hedgeTimer)
+            primaryCtrl.abort()
+            backupCtrl.abort()
+            resolve(value)
           }
-          // A 404 with sq > advertised head means the segment is not published yet.
-          // Poll briefly with a bounded budget instead of terminating ffmpeg immediately.
-          if (response.status === 404 && validHead && sq > head) {
-            void response.body?.cancel().catch(() => {})
-            pendingStartedAt ??= headersAt
-            const segmentMs = estimator.durationMs()
-            const maxPendingWaitMs = Math.max(MIN_PENDING_WAIT_MS, segmentMs * 3)
-            const pollMs = Math.min(MAX_PENDING_POLL_MS, Math.max(MIN_PENDING_POLL_MS, Math.round(segmentMs / 4)))
-            if (pendingPolls < MAX_PENDING_POLLS && headersAt - pendingStartedAt < maxPendingWaitMs) {
-              pendingPolls++
-              attempt = 0
-              notPublishedDelayMs = pollMs
-              return undefined
-            }
-            pendingExhausted = true
-            throw new AdaptivePullError('adaptive-request-failed', 404)
+          const finishReject = (error: unknown) => {
+            if (settled) return
+            settled = true
+            clearTimeout(hedgeTimer)
+            primaryCtrl.abort()
+            backupCtrl.abort()
+            reject(error)
           }
-          if (!response.ok) {
-            void response.body?.cancel().catch(() => {})
-            throw new AdaptivePullError('adaptive-request-failed', response.status)
+          const launchBackup = () => {
+            if (settled || backupStarted || requestSignal.aborted) return
+            backupStarted = true
+            void runSingleAttempt(false, AbortSignal.any([requestSignal, backupCtrl.signal])).then(
+              finishResolve,
+              error => {
+                backupDone = true
+                if (settled) return
+                if (isTerminalError(error) || primaryDone) finishReject(error)
+                else firstError ??= error
+              },
+            )
           }
-          if (!validHead) {
-            void response.body?.cancel().catch(() => {})
-            throw new AdaptivePullError('adaptive-invalid-head')
-          }
-          return { head, bytes: await readBounded(response, maxBytes, requestSignal, bodyIdleTimeoutMs), observedAt: startedAt }
-        })()
-        const result = await abortable(operation, requestSignal)
-        if (result) return result
+          const hedgeTimer = setTimeout(launchBackup, hedgeDelayMs)
+          void runSingleAttempt(true, AbortSignal.any([requestSignal, primaryCtrl.signal])).then(
+            finishResolve,
+            error => {
+              primaryDone = true
+              if (settled) return
+              if (isTerminalError(error)) { finishReject(error); return }
+              if (backupStarted) {
+                if (backupDone) finishReject(firstError ?? error)
+                else firstError ??= error
+              } else {
+                finishReject(error)
+              }
+            },
+          )
+        })
+      }
+      try {
+        const outcome = await abortable(runWithOptionalHedge(), requestSignal)
+        if (outcome.kind === 'ok') return outcome.result
+        notPublishedDelayMs = outcome.delayMs
       } catch (error) {
         if (error instanceof StreamFailureError && attempt === maxAttempts - 1) throw error
         if (signal.aborted) throw abortError()
@@ -362,18 +489,18 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
   let production: Promise<void> | undefined
   try {
     production = (async () => {
-      const first = await segment(source.videoUrl, 0, true)
+      const first = await segment(() => activeVideoUrl, 0, true)
       options.progress?.({ track: 'probe', phase: 'received', sq: 0, head: first.head, bytes: first.bytes.length })
       const start = Math.max(0, first.head - behindHeadFor(estimator.durationMs()))
-      const pull = async (base: string, output: Writable, track: 'video' | 'audio'): Promise<void> => {
+      const pull = async (getBase: () => string, output: Writable, track: 'video' | 'audio'): Promise<void> => {
         let sq = start
         let knownHead = first.head
         let warmed = false
-        const inflight = new Map<number, Promise<{ head: number; bytes: Buffer; observedAt: number }>>()
-        const enqueue = (targetSq: number): Promise<{ head: number; bytes: Buffer; observedAt: number }> => {
+        const inflight = new Map<number, Promise<SegmentResult>>()
+        const enqueue = (targetSq: number): Promise<SegmentResult> => {
           let pending = inflight.get(targetSq)
           if (!pending) {
-            pending = segment(base, targetSq)
+            pending = segment(getBase, targetSq, false, warmed)
             // Attach a no-op handler so a prefetched failure rejected before its turn
             // does not surface as an unhandled rejection; it still throws when awaited in order.
             void pending.catch(() => {})
@@ -414,8 +541,8 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
           inflight.clear()
         }
       }
-      const video = pull(source.videoUrl, options.video, 'video')
-      const audio = pull(source.audioUrl, options.audio, 'audio')
+      const video = pull(() => activeVideoUrl, options.video, 'video')
+      const audio = pull(() => activeAudioUrl, options.audio, 'audio')
       try { await Promise.all([video, audio]) } finally {
         controller.abort()
         await Promise.allSettled([video, audio])
