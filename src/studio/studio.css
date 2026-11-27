@@ -2705,7 +2705,7 @@ body,
 
 .studio .quality-btn {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   white-space: nowrap;
   gap: 5px;
   height: 28px;
